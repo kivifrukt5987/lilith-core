@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LILITH-CORE 🦇 веб-панель</title>
+<style>
+  :root{
+    --bg:#0b0710; --bg2:#140b1c; --panel:#180e22; --panel2:#221333;
+    --line:#2e1a42; --pink:#ff5fa2; --pink-dim:#c34b7f; --violet:#a06bff;
+    --text:#f3e9ff; --muted:#9d87b5; --ok:#5ef2a0; --warn:#ffcf5c; --err:#ff5c6e;
+    --me:#3a1f52; --her:#241233;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:
+      radial-gradient(1200px 700px at 15% -10%, #2a1140 0%, transparent 60%),
+      radial-gradient(900px 600px at 110% 110%, #3d1030 0%, transparent 55%),
+      var(--bg);
+    color:var(--text);
+    font:14px/1.55 ui-sans-serif,system-ui,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    display:flex; flex-direction:column; min-height:100vh;
+  }
+  header{
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    padding:12px 18px; border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg, rgba(255,95,162,.10), transparent);
+    backdrop-filter:blur(6px); position:sticky; top:0; z-index:5;
+  }
+  .logo{font-weight:800; letter-spacing:.14em; font-size:15px}
+  .logo span{color:var(--pink)}
+  .badge{
+    font-size:11px; padding:3px 9px; border-radius:999px; border:1px solid var(--line);
+    background:var(--panel); color:var(--muted); white-space:nowrap;
+  }
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;background:var(--muted)}
+  .dot.on{background:var(--ok); box-shadow:0 0 10px var(--ok)}
+  .dot.off{background:var(--err); box-shadow:0 0 10px var(--err)}
+  .dot.wait{background:var(--warn); box-shadow:0 0 10px var(--warn)}
+  .spacer{flex:1}
+  select.sel{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    border-radius:999px;padding:3px 9px;font-size:11px;outline:none;cursor:pointer}
+  select.sel:hover{border-color:var(--pink-dim)}
+  select.sel option.off{color:var(--muted)}
+  button{
+    font:inherit; color:var(--text); background:var(--panel2); border:1px solid var(--line);
+    padding:7px 13px; border-radius:10px; cursor:pointer; transition:.15s;
+  }
+  button:hover{border-color:var(--pink-dim); background:#2c1741}
+  button:disabled{opacity:.45; cursor:not-allowed}
+  button.primary{background:linear-gradient(135deg,var(--pink),#8a3bd6); border-color:transparent; font-weight:600}
+  button.primary:hover{filter:brightness(1.1)}
+  main{flex:1; display:flex; flex-direction:column; gap:12px; padding:16px 18px 0; max-width:1100px; width:100%; margin:0 auto}
+  #log{
+    flex:1; min-height:320px; overflow-y:auto; padding:16px; border:1px solid var(--line);
+    border-radius:16px; background:linear-gradient(180deg, rgba(20,11,28,.85), rgba(11,7,16,.85));
+    display:flex; flex-direction:column; gap:10px; scroll-behavior:smooth;
+  }
+  .msg{max-width:78%; padding:9px 13px; border-radius:14px; border:1px solid var(--line); white-space:pre-wrap; word-break:break-word}
+  .msg .meta{display:block; font-size:10.5px; color:var(--muted); margin-top:5px; letter-spacing:.04em}
+  .msg.me{align-self:flex-end; background:var(--me); border-color:#4d2a6b; border-bottom-right-radius:4px}
+  .msg.her{align-self:flex-start; background:var(--her); border-color:#3a2050; border-bottom-left-radius:4px}
+  .msg.sys{align-self:center; background:transparent; border-style:dashed; color:var(--muted); font-size:12px; max-width:92%; text-align:center}
+  .msg.err{align-self:center; background:#2a0d16; border-color:#5c1a28; color:#ffb3bc; font-size:12.5px}
+  .msg.echo-flag{border-left:3px solid var(--violet)}
+  footer{padding:14px 18px 20px; max-width:1100px; width:100%; margin:0 auto}
+  .row{display:flex; gap:10px; align-items:flex-end}
+  textarea{
+    flex:1; resize:vertical; min-height:52px; max-height:220px; padding:12px 14px; border-radius:12px;
+    border:1px solid var(--line); background:var(--panel); color:var(--text); font:inherit; outline:none;
+  }
+  textarea:focus{border-color:var(--pink-dim); box-shadow:0 0 0 3px rgba(255,95,162,.12)}
+  .hint{color:var(--muted); font-size:11.5px; margin-top:8px}
+  code{background:#241233; padding:1px 5px; border-radius:5px; color:#ffc9e4}
+  #stage{position:relative;height:300px;border:1px solid var(--line);border-radius:16px;
+    overflow:hidden;background:radial-gradient(600px 300px at 50% 0%, #2a1140 0%, transparent 70%), #120a1a}
+  #stage canvas{width:100%;height:100%;display:block}
+  #vrmfallback{width:100%;height:100%;object-fit:cover;transition:transform .09s linear, filter .3s}
+  #facedebug{position:absolute;left:10px;bottom:8px;font-size:10.5px;color:var(--muted);
+    background:rgba(0,0,0,.4);padding:3px 9px;border-radius:8px;letter-spacing:.03em}
+  .draw{
+    position:fixed; top:56px; right:18px; width:min(340px,92vw); padding:14px 16px;
+    border-radius:16px; border:1px solid var(--line); background:var(--panel2);
+    box-shadow:0 18px 50px rgba(0,0,0,.6); display:none; z-index:21;
+  }
+  .draw.show{display:block; animation:pop .18s ease-out}
+  .draw h4{margin:0 0 10px; font-size:13px; letter-spacing:.06em; color:var(--violet)}
+  .draw label{display:flex; justify-content:space-between; gap:10px; align-items:center;
+    font-size:12px; color:var(--muted); margin:8px 0}
+  .draw input[type=number]{width:86px; background:var(--panel); color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:5px 8px; font:inherit}
+  .draw input[type=checkbox]{accent-color:var(--pink); width:16px; height:16px}
+  .draw .hintline{font-size:11px; color:var(--muted); margin-top:8px}
+  #confirm{
+    position:fixed; inset:auto 18px 18px auto; width:min(360px,92vw); padding:14px 16px;
+    border-radius:16px; border:1px solid var(--pink-dim); background:var(--panel2);
+    box-shadow:0 18px 50px rgba(0,0,0,.6); display:none; z-index:20;
+  }
+  #confirm.show{display:block; animation:pop .18s ease-out}
+  @keyframes pop{from{transform:translateY(10px) scale(.97); opacity:0}to{transform:none;opacity:1}}
+  #confirm h4{margin:0 0 6px; font-size:13px; letter-spacing:.06em; color:var(--pink)}
+  #confirm p{margin:0 0 10px; font-size:12.5px; color:var(--text)}
+  #bar{height:5px; border-radius:99px; background:var(--line); overflow:hidden; margin-bottom:10px}
+  #barfill{height:100%; width:100%; background:linear-gradient(90deg,var(--pink),var(--violet))}
+  .cbtns{display:flex; gap:8px; justify-content:flex-end}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🦇 LILITH<span>·</span>CORE</div>
+  <span class="badge" id="status"><i class="dot wait"></i>подключение…</span>
+  <span class="badge" id="ver">v—</span>
+  <span class="badge" id="latency">пинг —</span>
+  <span class="badge" id="tokens" title="всего токенов за сессию сервера">Σ 0 ток</span>
+  <span class="badge" id="counts">0 / 0</span>
+  <select id="profile" class="sel" title="профиль мозга (этап 2)"></select>
+  <div class="spacer"></div>
+  <button id="btnPing" title="Проверить задержку">пинг</button>
+  <button id="btnClear" title="Очистить окно">очистить</button>
+  <button id="btnReconnect" title="Переподключиться">переподключить</button>
+  <button id="btnMem" title="Настройки памяти (этап 3)">⚙ память</button>
+  <button id="btnVoice" title="Озвучивать ответы (этап 5)">🔊 выкл</button>
+</header>
+
+<main>
+  <div id="stage">
+    <canvas id="vrmcanvas"></canvas>
+    <img id="vrmfallback" alt="аватар" hidden>
+    <div id="facedebug">лицо: инициализация…</div>
+  </div>
+  <div id="log" aria-live="polite"></div>
+</main>
+
+<footer>
+  <div class="row">
+    <textarea id="input" placeholder="Напиши мне, Кирюша… (Enter — отправить, Shift+Enter — новая строка)" rows="2"></textarea>
+    <button class="primary" id="btnSend">отправить 💖</button>
+  </div>
+  <div class="hint">
+    Этап 1: сервер отвечает <b>эхом</b> — мозг подключим на этапе 2. Протокол:
+    <code>{"type":"chat","text":"..."}</code> по <code id="wspath">/ws</code>.
+  </div>
+</footer>
+
+<div id="memdraw" class="draw" role="dialog" aria-modal="false">
+  <h4>📜 ПАМЯТЬ · НАСТРОЙКИ</h4>
+  <label>саммари каждые N сообщений <input type="number" id="memN" min="1" max="10000" value="40"></label>
+  <label>воспоминаний в контекст (top_k) <input type="number" id="memK" min="1" max="50" value="6"></label>
+  <label>авто-саммаризация <input type="checkbox" id="memAuto" checked></label>
+  <label>RAG-поиск по памяти <input type="checkbox" id="memRag" checked></label>
+  <div class="hintline">Сохраняется в data/runtime_settings.json и переживает перезапуск.</div>
+  <div class="cbtns" style="display:flex; gap:8px; justify-content:flex-end; margin-top:10px">
+    <button id="memClose">закрыть</button>
+    <button class="primary" id="memSave">сохранить</button>
+  </div>
+</div>
+
+<div id="confirm" role="dialog" aria-modal="false">
+  <h4>⚠ ПОДТВЕРДИ ДЕЙСТВИЕ</h4>
+  <p id="confirmText">—</p>
+  <div id="bar"><div id="barfill"></div></div>
+  <div class="cbtns">
+    <button id="btnDeny">нет</button>
+    <button class="primary" id="btnAllow">разрешить</button>
+  </div>
+</div>
+
+<script type="importmap">
+{"imports": {"three": "/ui/vendor/three.module.js"}}
+</script>
+<script type="module" src="/ui/vrm_viewer.js"></script>
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+//  Состояние
+// ---------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const logEl = $("log"), inputEl = $("input");
+const statusEl = $("status"), verEl = $("ver"), latencyEl = $("latency"), countsEl = $("counts");
+
+const state = {
+  ws: null,
+  sessionId: null,
+  streams: {},
+  profiles: [],
+  tokBase: 0,
+  tokSession: 0,
+  voiceAuto: false,
+  connected: false,
+  reconnectAttempt: 0,
+  reconnectTimer: null,
+  heartbeatTimer: null,
+  lastPingSent: 0,
+  sent: 0,
+  received: 0,
+  wsPath: (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws",
+};
+
+// ---------------------------------------------------------------------------
+//  Отрисовка
+// ---------------------------------------------------------------------------
+function timeNow() {
+  return new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function addMsg(kind, text, meta) {
+  const el = document.createElement("div");
+  el.className = "msg " + kind;
+  el.textContent = text;
+  if (meta) {
+    const m = document.createElement("span");
+    m.className = "meta";
+    m.textContent = meta;
+    el.appendChild(m);
+  }
+  logEl.appendChild(el);
+  logEl.scrollTop = logEl.scrollHeight;
+  while (logEl.children.length > 400) logEl.removeChild(logEl.firstChild);
+  return el;
+}
+
+function setStatus(text, cls) {
+  statusEl.innerHTML = '<i class="dot ' + cls + '"></i>' + text;
+}
+
+function updateCounts() {
+  countsEl.textContent = "↑" + state.sent + " / ↓" + state.received;
+}
+
+// ---------------------------------------------------------------------------
+//  Счётчик токенов (этап 2, хотфикс 0.2.1)
+// ---------------------------------------------------------------------------
+function fmtTokens(n) {
+  return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
+}
+function renderTokens() {
+  $("tokens").textContent = "Σ " + fmtTokens(state.tokBase + state.tokSession) + " ток";
+}
+function loadTokenStats() {
+  fetch("/api/brain/stats").then(r => r.json()).then(st => {
+    state.tokBase = st.total_tokens || 0;
+    renderTokens();
+  }).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+//  Протокол
+// ---------------------------------------------------------------------------
+function newId() {
+  return Math.random().toString(16).slice(2, 14);
+}
+
+function send(obj) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    addMsg("err", "нет соединения — сообщение не отправлено");
+    return false;
+  }
+  obj.id = obj.id || newId();
+  obj.ts = obj.ts || new Date().toISOString();
+  state.ws.send(JSON.stringify(obj));
+  state.sent++;
+  updateCounts();
+  return true;
+}
+
+function sendChat(text) {
+  const profile = $("profile").value || undefined;
+  if (!send({ type: "chat", text: text, data: { source: "webui", profile: profile } })) return;
+  addMsg("me", text, timeNow() + " · ты" + (profile ? " · [" + profile + "]" : ""));
+}
+
+// ---------------------------------------------------------------------------
+//  Реестр профилей мозга (этап 2)
+// ---------------------------------------------------------------------------
+function loadProfiles() {
+  fetch("/api/brain/profiles").then(r => r.json()).then(data => {
+    state.profiles = data.profiles || [];
+    const sel = $("profile");
+    const prev = sel.value;
+    sel.innerHTML = "";
+    state.profiles.forEach(p => {
+      const opt = document.createElement("option");
+      const status = p.provider === "mock" ? "mock" : (p.health && p.health.ok ? "ok" : "offline");
+      opt.value = p.name;
+      opt.textContent = p.name + " · " + status + (p.note ? " · " + p.note.slice(0, 28) : "");
+      if (status === "offline") opt.className = "off";
+      sel.appendChild(opt);
+    });
+    sel.value = prev || data.default_profile || (state.profiles[0] && state.profiles[0].name) || "";
+  }).catch(() => { $("profile").innerHTML = ""; });
+}
+
+function sendPing() {
+  state.lastPingSent = performance.now();
+  send({ type: "ping" });
+}
+
+// ---------------------------------------------------------------------------
+//  Обработка входящих
+// ---------------------------------------------------------------------------
+function handleMessage(raw) {
+  state.received++;
+  updateCounts();
+
+  let msg;
+  try { msg = JSON.parse(raw); }
+  catch (e) { addMsg("err", "сервер прислал не-JSON: " + raw.slice(0, 120)); return; }
+
+  const data = msg.data || {};
+  const stamp = timeNow();
+
+  switch (msg.type) {
+    case "hello":
+      state.sessionId = data.session_id || null;
+      verEl.textContent = "v" + (data.version || "?") + " · этап " + (data.stage ?? "?");
+      if (data.mode) verEl.textContent += " · " + data.mode;
+      addMsg("sys", "🦇 рукопожатие: " + (data.name || "LILITH-CORE") +
+        " · сессия " + (state.sessionId || "—") + " · режим " + (data.mode || "?") +
+        (data.default_profile ? " · профиль " + data.default_profile : ""));
+      loadProfiles();
+      break;
+
+    case "chat": {
+      const kind = data.echo ? "her echo-flag" : "her";
+      const who = data.role === "assistant" ? "Лилит" : "сервер";
+
+      if (data.partial && data.stream_id) {
+        let el = state.streams[data.stream_id];
+        if (!el) {
+          el = addMsg(kind, "", stamp + " · " + who + " · печатает…");
+          state.streams[data.stream_id] = el;
+        }
+        el.textContent += msg.text ?? "";
+        logEl.scrollTop = logEl.scrollHeight;
+        break;
+      }
+
+      const sid = data.stream_id;
+      const live = sid && state.streams[sid];
+      if (live) { delete state.streams[sid]; live.remove(); }
+
+      if (data.usage && data.usage.total_tokens) {
+        state.tokSession += data.usage.total_tokens;
+        renderTokens();
+      }
+      const lat = data.latency_ms != null ? " · " + data.latency_ms + " мс" : "";
+      const tps = data.tok_per_sec != null ? " · " + data.tok_per_sec + " ток/с" : "";
+      const tok = data.usage && data.usage.completion_tokens
+        ? " · " + data.usage.completion_tokens + " ток" + (data.usage.estimated ? "~" : "") : "";
+      const prof = data.profile ? " · [" + data.profile + "]" : "";
+      addMsg(kind, msg.text ?? "", stamp + " · " + who + lat + tps + tok + prof +
+        (data.echo ? " · [ЭХО · этап 1]" : ""));
+      if (state.voiceAuto && data.role === "assistant" && msg.text) {
+        send({ type: "voice", text: msg.text, data: { profile: data.profile } });
+      }
+      break;
+    }
+
+    case "pong": {
+      const lat = data.latency_ms != null ? data.latency_ms : (performance.now() - state.lastPingSent);
+      latencyEl.textContent = "пинг " + lat.toFixed(1) + " мс";
+      break;
+    }
+
+    case "system":
+      addMsg("sys", "• " + (msg.text ?? ""));
+      break;
+
+    case "log":
+      addMsg("sys", "[log] " + (msg.text ?? ""));
+      break;
+
+    case "state":
+      if (data.confirm) showConfirm(data.confirm);
+      break;
+
+    case "face": {
+      if (data.kind === "audio") {
+        playAudioB64(data.audio_b64);
+      } else if (data.kind === "viseme") {
+        scheduleViseme(data.offset_ms || 0, data.viseme, data.intensity || 0);
+      } else if (data.kind === "emotion" && window.LilithViewer) {
+        window.LilithViewer.applyEmotion(data.name);
+      }
+      break;
+    }
+
+    case "error":
+      addMsg("err", "⚠ " + (msg.text ?? "ошибка") + (data.code ? " (" + data.code + ")" : ""));
+      break;
+
+    default:
+      addMsg("sys", "[" + msg.type + "] " + JSON.stringify(msg).slice(0, 160));
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  Баннер подтверждения (заготовка под этап 6, Human-in-the-Loop)
+// ---------------------------------------------------------------------------
+let confirmTimer = null;
+function showConfirm(payload) {
+  const box = $("confirm");
+  $("confirmText").textContent = payload.text || "Лилит хочет выполнить действие.";
+  const total = Math.max(1, (payload.timeout_sec || 25) * 1000);
+  const start = performance.now();
+  box.classList.add("show");
+  clearInterval(confirmTimer);
+  confirmTimer = setInterval(() => {
+    const left = Math.max(0, 1 - (performance.now() - start) / total);
+    $("barfill").style.width = (left * 100).toFixed(1) + "%";
+    if (left <= 0) hideConfirm("timeout");
+  }, 80);
+  box.dataset.requestId = payload.request_id || "";
+}
+function hideConfirm(decision) {
+  clearInterval(confirmTimer);
+  $("confirm").classList.remove("show");
+  if (decision) send({ type: "state", data: { confirm_response: decision, request_id: $("confirm").dataset.requestId } });
+}
+$("btnAllow").onclick = () => hideConfirm("allow");
+$("btnDeny").onclick = () => hideConfirm("deny");
+
+// ---------------------------------------------------------------------------
+//  Настройки памяти (этап 3): шестерёнка -> drawer -> POST /api/memory/settings
+// ---------------------------------------------------------------------------
+function openMem() {
+  const box = $("memdraw");
+  box.classList.toggle("show");
+  if (!box.classList.contains("show")) return;
+  fetch("/api/memory/settings").then(r => r.json()).then(data => {
+    if (!data.enabled) { addMsg("sys", "память выключена: запусти сервер с --with-memory или features.memory_enabled: true"); }
+    const f = data.fields || {};
+    $("memN").value = f.summarize_every_n ?? 40;
+    $("memK").value = f.top_k ?? 6;
+    $("memAuto").checked = !!f.auto_summarize;
+    $("memRag").checked = !!f.rag_enabled;
+  }).catch(() => addMsg("sys", "не смогла прочитать настройки памяти"));
+}
+function saveMem() {
+  const patch = {
+    summarize_every_n: parseInt($("memN").value, 10) || 40,
+    top_k: parseInt($("memK").value, 10) || 6,
+    auto_summarize: $("memAuto").checked,
+    rag_enabled: $("memRag").checked,
+  };
+  fetch("/api/memory/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  }).then(r => r.json()).then(res => {
+    if (res.status === "ok") {
+      addMsg("sys", "📜 настройки памяти сохранены: саммари каждые " + res.fields.summarize_every_n +
+        ", top_k " + res.fields.top_k + ", авто " + (res.fields.auto_summarize ? "вкл" : "выкл"));
+      $("memdraw").classList.remove("show");
+    } else {
+      addMsg("err", "память не сохранилась: " + JSON.stringify(res.detail || res));
+    }
+  }).catch(e => addMsg("err", "ошибка сохранения памяти: " + e));
+}
+
+// ---------------------------------------------------------------------------
+//  Лицо и голос в панели (этап 5 v2): аудио-чанки + виземы + эмоции
+// ---------------------------------------------------------------------------
+const audio = { ctx: null, next: 0, pendingStart: 0 };
+function ensureAudio() {
+  if (!audio.ctx) audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audio.ctx.state === "suspended") audio.ctx.resume();
+  return audio.ctx;
+}
+async function playAudioB64(b64) {
+  try {
+    const ctx = ensureAudio();
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const buf = await ctx.decodeAudioData(bytes.buffer.slice(0));
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    const t = Math.max(ctx.currentTime + 0.03, audio.next);
+    src.start(t);
+    audio.next = t + buf.duration;
+    audio.pendingStart = t;
+  } catch (e) { addMsg("sys", "аудио-чанк не проигрался: " + e); }
+}
+function scheduleViseme(offsetMs, basket, intensity) {
+  if (!window.LilithViewer) return;
+  const ctx = audio.ctx;
+  const base = audio.pendingStart || (ctx ? ctx.currentTime : 0);
+  const delay = ctx ? Math.max(0, (base - ctx.currentTime) * 1000 + offsetMs) : offsetMs;
+  setTimeout(() => window.LilithViewer.applyViseme(basket, intensity), delay);
+}
+function initFace() {
+  const viewer = window.LilithViewer;
+  if (!viewer) { $("facedebug").textContent = "лицо: вьювер не загрузился"; return; }
+  viewer.init($("stage"), $("vrmcanvas"), $("facedebug"), $("vrmfallback")).then(ok => {
+    fetch("/api/personas").then(r => r.json()).then(reg => {
+      const persona = (reg.personas || []).find(p => p.id === reg.default) || (reg.personas || [])[0];
+      if (!persona) {
+        viewer.setFallback(null);
+        addMsg("sys", "персоны не найдены: положи папку personas/<id>/ (persona.md + fallback.jpg)");
+        return;
+      }
+      if (ok && persona.vrm) {
+        viewer.load(persona.vrm).then(loaded => { if (!loaded) viewer.setFallback(persona.fallback); });
+      } else if (persona.fallback) {
+        viewer.setFallback(persona.fallback);
+      } else {
+        viewer.setFallback(null);
+        addMsg("sys", "у персоны " + persona.id + " нет ни model.vrm, ни fallback-картинки");
+      }
+    }).catch(e => {
+      viewer.setFallback(null);
+      addMsg("sys", "не смогла прочитать /api/personas: " + e);
+    });
+  });
+}
+document.addEventListener("DOMContentLoaded", initFace);
+
+$("btnVoice").onclick = () => {
+  state.voiceAuto = !state.voiceAuto;
+  $("btnVoice").textContent = state.voiceAuto ? "🔊 вкл" : "🔊 выкл";
+  addMsg("sys", state.voiceAuto ? "озвучка ответов включена: буду говорить вслух" : "озвучка выключена");
+};
+
+// ---------------------------------------------------------------------------
+//  Соединение
+// ---------------------------------------------------------------------------
+function connect() {
+  clearTimeout(state.reconnectTimer);
+  setStatus("подключение…", "wait");
+
+  let ws;
+  try { ws = new WebSocket(state.wsPath); }
+  catch (e) { addMsg("err", "не удалось создать WebSocket: " + e); scheduleReconnect(); return; }
+  state.ws = ws;
+
+  ws.onopen = () => {
+    state.connected = true;
+    state.reconnectAttempt = 0;
+    setStatus("на связи", "on");
+    send({ type: "hello", data: { client_id: "webui", client: navigator.userAgent.slice(0, 60) } });
+    startHeartbeat();
+  };
+
+  ws.onmessage = (ev) => handleMessage(ev.data);
+
+  ws.onerror = () => setStatus("ошибка соединения", "off");
+
+  ws.onclose = (ev) => {
+    state.connected = false;
+    stopHeartbeat();
+    setStatus("отключено (code " + ev.code + ")", "off");
+    addMsg("sys", "соединение закрыто" + (ev.reason ? ": " + ev.reason : ""));
+    scheduleReconnect();
+  };
+}
+
+function scheduleReconnect() {
+  state.reconnectAttempt++;
+  const delay = Math.min(15000, 700 * Math.pow(1.7, state.reconnectAttempt - 1));
+  setStatus("переподключение через " + Math.round(delay / 1000) + " c…", "wait");
+  state.reconnectTimer = setTimeout(connect, delay);
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  state.heartbeatTimer = setInterval(() => { if (state.connected) sendPing(); }, 15000);
+}
+function stopHeartbeat() { clearInterval(state.heartbeatTimer); state.heartbeatTimer = null; }
+
+// ---------------------------------------------------------------------------
+//  UI-события
+// ---------------------------------------------------------------------------
+$("btnSend").onclick = () => {
+  const text = inputEl.value.trim();
+  if (!text) return;
+  sendChat(text);
+  inputEl.value = "";
+  inputEl.focus();
+};
+
+inputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("btnSend").click(); }
+});
+
+$("btnClear").onclick = () => { logEl.innerHTML = ""; addMsg("sys", "окно очищено"); };
+$("btnPing").onclick = () => { sendPing(); addMsg("sys", "пинг отправлен"); };
+$("btnMem").onclick = openMem;
+$("memClose").onclick = () => $("memdraw").classList.remove("show");
+$("memSave").onclick = saveMem;
+$("btnReconnect").onclick = () => {
+  addMsg("sys", "переподключаюсь вручную…");
+  if (state.ws) { state.ws.onclose = null; try { state.ws.close(); } catch (e) {} }
+  state.reconnectAttempt = 0;
+  connect();
+};
+
+// Загружаем сведения о сервере по HTTP (не критично, если недоступно).
+fetch("/healthz").then(r => r.json()).then(h => {
+  verEl.textContent = "v" + h.version + " · этап " + h.stage + (h.echo_mode ? " · echo" : "");
+  $("wspath").textContent = h.ws && h.ws.path ? h.ws.path : "/ws";
+  addMsg("sys", "healthz: " + h.status + " · аптайм " + h.uptime_sec + " c · включено: " + (h.features || []).join(", "));
+}).catch(() => { addMsg("sys", "healthz недоступен (сервер ещё не поднялся?)"); });
+
+addMsg("sys", "🦇 LILITH-CORE web panel · жду соединения…");
+loadProfiles();
+loadTokenStats();
+connect();
+</script>
+</body>
+</html>

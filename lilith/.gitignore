@@ -1,0 +1,44 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- Виртуальное окружение ---
+.venv/
+venv/
+env/
+
+# --- Секреты ---
+.env
+config/config.local.yaml
+
+# --- Данные и логи (создаются в рантайме) ---
+logs/*
+!logs/.gitkeep
+data/
+*.db
+*.sqlite3
+chroma/
+
+# --- Модели (тяжёлые, качаются отдельно) ---
+models/
+*.gguf
+*.safetensors
+*.bin
+
+# --- Артефакты сборок ---
+artifacts/*.zip
+artifacts/*.whl
+
+# --- ОС / редакторы ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,201 @@
+# ============================================================================
+#  LILITH-CORE — основной конфигурационный файл
+#  Приоритет значений (чем ниже, тем важнее):
+#    значения по умолчанию в коде  <  config/config.yaml  <  .env  <  переменные окружения
+#
+#  Секреты (api_key, токены) сюда НЕ пишем — для них есть .env
+#  Переопределить путь к файлу:  set LILITH_CONFIG=D:\path\to\my.yaml
+# ============================================================================
+
+app:
+  name: "LILITH-CORE"
+  env: "dev"                # dev | prod
+  debug: true
+  user_name: "Кирюша"       # как Лилит обращается к хозяину
+  persona_name: "Лилит"
+  persona_path: "src/lilith_core/persona/persona.md"
+
+server:
+  host: "127.0.0.1"         # 0.0.0.0 — если нужна доступность из локальной сети
+  port: 8765
+  cors_origins: ["*"]
+  ws_path: "/ws"
+  ws_max_message_size: 65536
+  ws_heartbeat_sec: 15.0
+  ws_reconnect_timeout_sec: 30.0
+
+logging:
+  level: "INFO"             # TRACE | DEBUG | INFO | SUCCESS | WARNING | ERROR
+  dir: "logs"
+  file_name: "lilith.log"
+  rotation: "10 MB"
+  retention: "14 days"
+  compression: "zip"
+  console: true
+  backtrace: true           # полный стектрейс (в prod лучше false)
+  diagnose: false           # показывать значения переменных в трейсбеке (в prod — НИКОГДА)
+
+# --- ЭТАП 2: мозг (OpenAI-совместимые endpoint'ы), РЕЕСТР ПРОФИЛЕЙ ----------
+# Профиль = именованная модель на своём сервере (порт / имя / ключ / параметры).
+# Переключение модели = смена default_profile ИЛИ поле data.profile в WS chat.
+# Новая модель (Qwen 4.x, Gemma 5, что угодно) = просто новый профиль, код не трогается.
+#
+# Куда смотреть:
+#   LM Studio            - один сервер, модель выбирается именем в запросе
+#   llama.cpp server     - один инстанс = один порт (для тяжёлой модели свой порт)
+#   Ollama               - много моделей на одном порту, различаются именем
+#   облако (OpenRouter)  - свой base_url + ключ из .env
+brain:
+  default_profile: chat
+  api_key_env: "LILITH_BRAIN_API_KEY"
+  system_prompt_extra: ""
+
+  defaults:                       # наследуется всеми профилями
+    provider: "openai_compatible"
+    base_url: "http://127.0.0.1:1234/v1"     # LM Studio по умолчанию
+    model: "local-model"                     # имя загруженной модели
+    temperature: 0.8
+    max_tokens: 1024
+    top_p: 0.95
+    request_timeout_sec: 120.0
+    max_retries: 2
+    stream: true
+    history_max_messages: 40                 # сколько последних реплик шлём в контекст
+
+  profiles:
+    chat:                         # основная компаньонка: быстрая малышка
+      note: "Qwen3.5-4B/9B (LM Studio), живёт постоянно"
+      temperature: 0.9
+    coder:                        # код и тяжёлые задачи: большая модель или облако
+      note: "отдельный инстанс llama.cpp или облачный endpoint"
+      base_url: "http://127.0.0.1:1235/v1"
+      temperature: 0.2
+      max_tokens: 4096
+    vision:                       # экран: скриншоты + OCR (инструмент этапа 6)
+      note: "Gemma-4-E4B / Qwen3.5-9B (нативный OCR, мультимодальные)"
+      base_url: "http://127.0.0.1:1236/v1"
+      temperature: 0.2
+    summarizer:                   # память: самая дешёвая модель (этап 3)
+      note: "саммаризация журнала и фактов"
+      temperature: 0.3
+      max_tokens: 512
+    experiment:                   # СЛОТ ДЛЯ ЭКСПЕРИМЕНТОВ
+      note: "сюда любую новую модель: model + base_url, остальное унаследуется"
+      # model: "qwen4-2b-whatever-Q4_K_M"
+      # base_url: "http://127.0.0.1:1237/v1"
+
+# --- ЭТАП 3: память ----------------------------------------------------------
+memory:
+  db_path: "data/lilith.db"
+  journal_max_messages: 5000
+  auto_summarize: true                     # авто-жувация журнала (выкл из программы)
+  summarize_every_n: 40                    # каждые N сообщений; МЕНЯЕТСЯ НА ЛЕТУ:
+                                           # панель (шестерёнка) или POST /api/memory/settings
+  rag_enabled: true
+  chroma_path: "data/chroma"
+  chroma_collection: "lilith_memory"
+  embedding_model: "hash"                  # hash = без моделей; или имя sentence-transformers
+  top_k: 6                                 # сколько воспоминаний подмешивать в контекст
+  runtime_settings_path: "data/runtime_settings.json"  # рантайм-правки переживают перезапуск
+
+# --- ЭТАП 4: уши и горло -----------------------------------------------------
+# Реестры бэкендов: выбор в конфиге, горячая замена без перезапуска.
+voice:
+  # УШИ (STT): faster-whisper (дефолт) | whisper-cpp (резерв) | vosk (резерв) | mock
+  stt_backend: "faster-whisper"
+  stt_model: "Systran/faster-whisper-small"   # small для 12GB; large-v3 по желанию
+  stt_device: "auto"                          # auto | cuda | cpu
+  stt_compute_type: "float16"                 # float16 на GPU, int8 на CPU
+  stt_language: "ru"
+  # VAD: silero (точнее, нужен torch) | energy (без зависимостей)
+  vad_enabled: true
+  vad_backend: "silero"
+  vad_threshold: 0.5            # silero: вероятность речи
+  vad_energy_threshold: 0.02    # energy-vad: порог громкости кадра
+  push_to_talk_key: "ctrl+space"
+  # ГОРЛО (TTS): профили голосов, у каждого свой бэкенд и тембр
+  tts_enabled: false
+  tts_device: "cuda"
+  tts_sample_rate: 48000
+  default_voice: "lilith"
+  profiles:
+    lilith:                        # повседневный голос
+      backend: "silero"
+      voice: "kseniya"
+      note: "основной голос Лили"
+    soft:                          # тихий вечерний
+      backend: "silero"
+      voice: "xeniya"              # поменяй на любимый из silero v4_ru
+      speed: 0.92
+      note: "мягче и медленнее"
+    cloud:                         # облачный фолбэк с богатыми тембрами
+      backend: "edge"
+      extra: {edge_voice: "ru-RU-SvetlanaNeural"}
+      note: "нужен интернет"
+    clone:                         # СЛОТ zero-shot-клона (совет другой Лильки принят)
+      backend: "zero-shot"
+      reference: "voices/lilith-clone/reference.wav"   # 3-10 сек, моно, без музыки
+      note: "положи reference.wav в voices/lilith-clone/ и выбери движок"
+  # Паки моделей: манифест + установщик (lilith-core packs ...)
+  voices_dir: "voices"
+  packs_manifest: "models/packs.yaml"
+  packs_root: ""
+
+# --- ЭТАП 5: лицо ------------------------------------------------------------
+face:
+  vtuber_studio_enabled: false         # true, когда VTuber Studio запущена с API
+  vtuber_studio_url: "ws://localhost:8001"
+  vtuber_studio_plugin: "LILITH-CORE"
+  vtuber_studio_developer: "Kiryusha"
+  vtuber_studio_token_env: "LILITH_VTS_TOKEN"
+  vmc_enabled: false                   # резерв: VMC/OSC напрямую
+  vmc_host: "127.0.0.1"
+  vmc_port: 39539
+  reconnect_delay_sec: 3.0             # старт backoff'а реконнекта (потолок 30 с)
+  emotion_default: "neutral"
+  keyword_fallback: true               # угадывать эмоцию по словам, если тегов нет
+  hotkeys: {}                          # emotion -> HotkeyID из VTuber Studio, напр.:
+                                       # hotkeys:
+                                       #   joy: "abc123"
+                                       #   smug: "def456"
+
+# --- ЭТАП 6: руки ------------------------------------------------------------
+hands:
+  confirm_timeout_sec: 25.0                # баннер подтверждения в веб-панели
+  require_confirmation: true
+  allow_vitals: true
+  allow_browser: true
+  allow_obs: true
+  browser_headless: false
+  obs_host: "127.0.0.1"
+  obs_port: 4455
+  obs_password_env: "LILITH_OBS_PASSWORD"
+
+# --- ЭТАП 7: мосты -----------------------------------------------------------
+bridges:
+  discord_enabled: false
+  discord_token_env: "LILITH_DISCORD_TOKEN"
+  discord_command_prefix: "!"
+  vk_enabled: false
+  vk_token_env: "LILITH_VK_TOKEN"
+  vk_group_id: 0
+
+# --- ЭТАП 8: стрим и сервис --------------------------------------------------
+stream:
+  twitch_enabled: false
+  twitch_token_env: "LILITH_TWITCH_TOKEN"
+  twitch_channel: ""
+  obs_scene_on_chat: "Just Chatting"
+  obs_scene_on_stream: "Lilith Live"
+  autostart: false
+
+features:
+  web_panel: true
+  echo_mode: true                          # /ws отвечает эхом, пока мозг выключен
+  brain_enabled: false                     # поставь true, когда укажешь модель
+                                           # (или запускай с флагом --mock-brain для демо)
+  memory_enabled: true                     # журнал + RAG + авто-саммари (этап 3)
+  voice_enabled: true                      # уши/горло; без .[voice] озвучка = mock-бип
+  face_enabled: true                       # VRM-сцена в панели (этап 5)
+  hands_enabled: false
+  bridges_enabled: false
