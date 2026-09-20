@@ -15,6 +15,14 @@ from loguru import logger
 from ..config import Settings, resolve_path
 from .hotkey import MockPushToTalk, PushToTalk, parse_combo
 from .packs import Pack, PackError, PackManager
+from .pcm import (
+    CHUNK_BYTES,
+    DEFAULT_SAMPLE_RATE,
+    AudioChunk,
+    PcmChunker,
+    resample_pcm16,
+    wav_to_pcm,
+)
 from .stt import (
     EnergyVAD,
     FasterWhisperSTT,
@@ -56,6 +64,12 @@ __all__ = [
     "split_sentences",
     "read_wav",
     "write_wav",
+    "AudioChunk",
+    "PcmChunker",
+    "CHUNK_BYTES",
+    "DEFAULT_SAMPLE_RATE",
+    "resample_pcm16",
+    "wav_to_pcm",
     "FasterWhisperSTT",
     "WhisperCppSTT",
     "VoskSTT",

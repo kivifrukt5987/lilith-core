@@ -173,6 +173,16 @@ class TestOtherBridges:
         await bridge.stop()
         assert await bridge.set_emotion("smug") is False
 
+
+class TestSyncBridges:
+    """Синхронные проверки мостов.
+
+    Вынесены из :class:`TestOtherBridges` намеренно: при ``asyncio_mode = "auto"``
+    pytest-asyncio вешает марк на **все** тесты класса, и синхронные методы
+    начинают предупреждать «marked with asyncio but is not an async function»
+    (косметика из приёмки 0.6.2).
+    """
+
     def test_vmc_reserve_unavailable(self) -> None:
         ok, reason = VmcBridge().available()
         assert ok is False

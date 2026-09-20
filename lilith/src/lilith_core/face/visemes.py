@@ -15,7 +15,7 @@ import math
 import struct
 from dataclasses import dataclass
 
-__all__ = ["VisemeFrame", "VISEME_WINDOWS", "analyze_window", "extract_visemes", "VISEME_TO_VRM"]
+__all__ = ["VisemeFrame", "VISEME_WINDOWS", "WINDOW_MS", "analyze_window", "extract_visemes", "VISEME_TO_VRM"]
 
 #: Окно анализа, мс.
 WINDOW_MS = 60

@@ -1,0 +1,20 @@
+# Голос персоны (этап 6, схема D3).
+# A2: продюсер лица фиксирует 24 kHz и приводит поток к нему сам;
+#     sample_rate здесь — частота, к которой стандартизуется пак.
+pack: lilith            # ключ из voice.profiles (backend silero, voice kseniya)
+speaker: ksenya
+sample_rate: 24000
+speed: 1.0
+pitch_shift: 0.0
+fallback_pack: soft     # если основной пак откажет
+reference_wav: null     # слот zero-shot-клона: путь к 3-10 сек моно-записи
+
+# ADR-020.3 (приём из «Нейроны»): слот нонвербальных событий — смех, вздох,
+# хмыканье, крик (у «Нейроны» это XTTS v2 с тегами в стиле Bark).
+# В этапе 6 слот ТОЛЬКО объявлен и виден в /api/face/personas; синтез — этап голоса.
+nonverbal: {}
+# nonverbal:
+#   laugh:  {tag: "[laughs]",  weight: 1.0}
+#   sigh:   {tag: "[sighs]",   weight: 0.8}
+#   hum:    {tag: "[hums]",    weight: 0.6}
+#   cry:    {tag: "[cries]",   weight: 0.7}

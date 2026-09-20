@@ -1,0 +1,24 @@
+# Карточка персоны (этап 6, схема D2). Приватные поля наружу не отдаются (D8).
+id: lilith
+display_name: "Лилит"
+version: 1
+persona_md: persona.md          # душа: системный промт
+brain_profile: chat             # ссылка на brain.profiles.*
+greeting: "Привет, Кирюша. Я тут. 🦇"
+tags: [core, stream, default]
+
+# LoRA-слот (D5): поля внутри card.yaml. Этап 6 работает в режиме prompt-only —
+# веса не грузятся, персону отличает системный промт. lora: null = слот пуст.
+lora: null
+# lora:
+#   path: "lilith.safetensors"   # относительно face.lora_dir или personas/lilith/lora/
+#   trigger_word: "lilith"
+#   scale: 1.0
+#   autoload: false
+
+# Белый список инструментов (D6): ПУСТО = запрещено всё.
+# Появится на этапе 7 («Руки»); HITL-политика живёт в конфиге hands, не здесь.
+tools: []
+
+# Область памяти (D7): колонка persona_id в messages + префикс коллекций RAG.
+memory_scope: lilith

@@ -122,6 +122,7 @@
   <button id="btnReconnect" title="Переподключиться">переподключить</button>
   <button id="btnMem" title="Настройки памяти (этап 3)">⚙ память</button>
   <button id="btnVoice" title="Озвучивать ответы (этап 5)">🔊 выкл</button>
+  <select id="persona" title="Активная персона (этап 6): меняет VRM, голос и карточку"></select>
 </header>
 
 <main>
@@ -299,6 +300,39 @@ function sendPing() {
 }
 
 // ---------------------------------------------------------------------------
+//  Реестр персон-агентов (этап 6): селектор + глобальный своп (D9)
+// ---------------------------------------------------------------------------
+function loadPersonas() {
+  fetch("/api/face/personas").then(r => r.json()).then(data => {
+    state.personas = data.personas || [];
+    const sel = $("persona");
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = "";
+    state.personas.forEach(row => {
+      const opt = document.createElement("option");
+      opt.value = row.id;
+      const body = row.has_vrm ? "3D" : "2D";
+      opt.textContent = "🎭 " + (row.display_name || row.id) + " · " + body;
+      opt.title = row.has_vrm ? "тело подключено" : "тела нет — будет фолбэк-картинка";
+      sel.appendChild(opt);
+    });
+    sel.value = (data.active && state.personas.some(p => p.id === data.active))
+      ? data.active
+      : (prev || (state.personas[0] || {}).id || "");
+    if (window.LilithViewer && state.webVrm !== false) applyPersonaToFace(data.active);
+  }).catch(() => { /* реестр недоступен — панель работает без селектора */ });
+}
+
+function applyPersonaToFace(personaId) {
+  const row = (state.personas || []).find(p => p.id === personaId);
+  const viewer = window.LilithViewer;
+  if (!row || !viewer) return;
+  if (row.vrm) viewer.load(row.vrm).then(ok => { if (!ok) viewer.setFallback(row.fallback); });
+  else viewer.setFallback(row.fallback);
+}
+
+// ---------------------------------------------------------------------------
 //  Обработка входящих
 // ---------------------------------------------------------------------------
 function handleMessage(raw) {
@@ -321,6 +355,10 @@ function handleMessage(raw) {
         " · сессия " + (state.sessionId || "—") + " · режим " + (data.mode || "?") +
         (data.default_profile ? " · профиль " + data.default_profile : ""));
       loadProfiles();
+      // Этап 6: основной путь лица — Unity-клиент (/ws/face/producer).
+      // VRM в панели жив, но включается флагом face.web_vrm_enabled (B1-б).
+      state.webVrm = data.web_vrm_enabled === true;
+      loadPersonas();
       break;
 
     case "chat": {
@@ -497,11 +535,21 @@ function initFace() {
   const viewer = window.LilithViewer;
   if (!viewer) { $("facedebug").textContent = "лицо: вьювер не загрузился"; return; }
   viewer.init($("stage"), $("vrmcanvas"), $("facedebug"), $("vrmfallback")).then(ok => {
-    fetch("/api/personas").then(r => r.json()).then(reg => {
-      const persona = (reg.personas || []).find(p => p.id === reg.default) || (reg.personas || [])[0];
+    fetch("/api/face/personas").then(r => r.json()).then(reg => {
+      const active = reg.active;
+      const persona = (reg.personas || []).find(p => p.id === active) || (reg.personas || [])[0];
       if (!persona) {
         viewer.setFallback(null);
-        addMsg("sys", "персоны не найдены: положи папку personas/<id>/ (persona.md + fallback.jpg)");
+        addMsg("sys", "персоны не найдены: положи папку personas/<id>/ (card.yaml + persona.md + fallback.jpg)");
+        return;
+      }
+      state.personas = reg.personas || [];
+      // B1-б: three-vrm больше не основной путь — сцена в панели живёт только под флагом
+      if (state.webVrm === false) {
+        $("vrmcanvas").hidden = true;
+        viewer.setFallback(persona.fallback);
+        $("facedebug").textContent =
+          "лицо: Unity-клиент (" + (reg.producer ? reg.producer.clients : 0) + " подкл.) · web VRM выключен";
         return;
       }
       if (ok && persona.vrm) {
@@ -514,11 +562,33 @@ function initFace() {
       }
     }).catch(e => {
       viewer.setFallback(null);
-      addMsg("sys", "не смогла прочитать /api/personas: " + e);
+      addMsg("sys", "не смогла прочитать /api/face/personas: " + e);
     });
   });
 }
 document.addEventListener("DOMContentLoaded", initFace);
+
+document.addEventListener("DOMContentLoaded", () => {
+  const sel = $("persona");
+  if (!sel) return;
+  sel.onchange = () => {
+    const id = sel.value;
+    if (!id) return;
+    // D9: своп глобальный — сервер переключит и Unity-клиент, и горло, и память
+    fetch("/api/face/personas/" + encodeURIComponent(id) + "/activate", { method: "POST" })
+      .then(r => r.json())
+      .then(res => {
+        if (res.status === "ok") {
+          addMsg("sys", "🎭 персона переключена: " + id + (res.frame && res.frame.voice ? " · голос " + (res.frame.voice.pack || "—") : ""));
+          applyPersonaToFace(id);
+        } else {
+          addMsg("err", "своп персоны не удался: " + (res.detail || res.status));
+          loadPersonas();
+        }
+      })
+      .catch(e => addMsg("err", "своп персоны: " + e));
+  };
+});
 
 $("btnVoice").onclick = () => {
   state.voiceAuto = !state.voiceAuto;

@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="760" viewBox="0 0 1180 760" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"/>
+    </marker>
+    <marker id="arrowPink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#db2777"/>
+    </marker>
+    <linearGradient id="gServer" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fdf2f8"/><stop offset="100%" stop-color="#fce7f3"/>
+    </linearGradient>
+    <linearGradient id="gUnity" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#eff6ff"/><stop offset="100%" stop-color="#dbeafe"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1180" height="760" fill="#ffffff"/>
+  <text x="40" y="42" font-size="26" font-weight="700" fill="#111827">LILITH-CORE · этап 6 — схема Unity-сцены и потока кадров</text>
+  <text x="40" y="66" font-size="14" fill="#6b7280">Unity 6000.0 LTS · Built-in RP · UniVRM 0.131.2 · VRM 1.0 · raw PCM int16 mono 24 kHz, чанк 2048 Б</text>
+
+  <!-- SERVER -->
+  <rect x="40" y="96" width="330" height="580" rx="14" fill="url(#gServer)" stroke="#f9a8d4" stroke-width="2"/>
+  <text x="62" y="128" font-size="18" font-weight="700" fill="#9d174d">СЕРВЕР (Python · песочница тестирует)</text>
+
+  <rect x="62" y="146" width="286" height="74" rx="10" fill="#ffffff" stroke="#f9a8d4"/>
+  <text x="78" y="170" font-size="14" font-weight="600" fill="#111827">voice/tts.py · VoiceCore</text>
+  <text x="78" y="190" font-size="12" fill="#6b7280">silero / edge / mock</text>
+  <text x="78" y="208" font-size="12" fill="#6b7280">→ WAV по предложениям</text>
+
+  <rect x="62" y="236" width="286" height="74" rx="10" fill="#ffffff" stroke="#f9a8d4"/>
+  <text x="78" y="260" font-size="14" font-weight="600" fill="#111827">voice/pcm.py</text>
+  <text x="78" y="280" font-size="12" fill="#6b7280">resample_pcm16 → 24 kHz</text>
+  <text x="78" y="298" font-size="12" fill="#6b7280">PcmChunker → 2048 Б</text>
+
+  <rect x="62" y="326" width="286" height="92" rx="10" fill="#ffffff" stroke="#f9a8d4"/>
+  <text x="78" y="350" font-size="14" font-weight="600" fill="#111827">face/producer.py · FaceProducerHub</text>
+  <text x="78" y="370" font-size="12" fill="#6b7280">реестр подключений, реплики,</text>
+  <text x="78" y="388" font-size="12" fill="#6b7280">stop / focus / swap персоны</text>
+  <text x="78" y="406" font-size="12" fill="#6b7280">want_server_visemes (A3.1)</text>
+
+  <rect x="62" y="434" width="286" height="74" rx="10" fill="#ffffff" stroke="#f9a8d4"/>
+  <text x="78" y="458" font-size="14" font-weight="600" fill="#111827">face/personas.py · реестр v2</text>
+  <text x="78" y="478" font-size="12" fill="#6b7280">card.yaml · voice.yaml · face.yaml</text>
+  <text x="78" y="496" font-size="12" fill="#6b7280">lora (prompt-only) · tools · memory</text>
+
+  <rect x="62" y="524" width="286" height="74" rx="10" fill="#ffffff" stroke="#f9a8d4"/>
+  <text x="78" y="548" font-size="14" font-weight="600" fill="#111827">face/group.py · GroupManager</text>
+  <text x="78" y="568" font-size="12" fill="#6b7280">/ws/group, потолок 4, слоты,</text>
+  <text x="78" y="586" font-size="12" fill="#6b7280">фокус говорящей (E2-а)</text>
+
+  <rect x="62" y="614" width="286" height="46" rx="10" fill="#ffffff" stroke="#f9a8d4"/>
+  <text x="78" y="636" font-size="13" font-weight="600" fill="#111827">webui/index.html</text>
+  <text x="78" y="652" font-size="11" fill="#6b7280">VRM под флагом web_vrm_enabled=false (B1-б)</text>
+
+  <line x1="205" y1="220" x2="205" y2="236" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="205" y1="310" x2="205" y2="326" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="205" y1="418" x2="205" y2="434" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="205" y1="508" x2="205" y2="524" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- WS channel -->
+  <path d="M 370 372 H 470" stroke="#db2777" stroke-width="3" marker-end="url(#arrowPink)"/>
+  <path d="M 470 400 H 370" stroke="#db2777" stroke-width="3" stroke-dasharray="6 4" marker-end="url(#arrowPink)"/>
+  <text x="374" y="352" font-size="13" font-weight="700" fill="#9d174d">WS /ws/face/producer</text>
+  <text x="374" y="392" font-size="11" fill="#9d174d">hello · audio · viseme · emotion</text>
+  <text x="374" y="420" font-size="11" fill="#9d174d">persona · focus · stop · done</text>
+  <text x="374" y="440" font-size="11" fill="#6b7280">← ready · speak · stats · ping</text>
+
+  <!-- UNITY -->
+  <rect x="486" y="96" width="654" height="580" rx="14" fill="url(#gUnity)" stroke="#93c5fd" stroke-width="2"/>
+  <text x="508" y="128" font-size="18" font-weight="700" fill="#1e3a8a">UNITY-СЦЕНА (собирает Кирюша)</text>
+
+  <!-- hierarchy -->
+  <rect x="508" y="146" width="300" height="248" rx="10" fill="#ffffff" stroke="#93c5fd"/>
+  <text x="524" y="170" font-size="14" font-weight="700" fill="#111827">Иерархия</text>
+  <g font-size="12.5" fill="#374151" font-family="Consolas, monospace">
+    <text x="524" y="196">Lilith              [GameObject]</text>
+    <text x="540" y="216">├ LilithFaceClient</text>
+    <text x="540" y="236">├ LilithClientConfig</text>
+    <text x="540" y="256">├ LilithWSClient   (создаётся кодом)</text>
+    <text x="540" y="276">├ VrmLoader</text>
+    <text x="540" y="296">├ AudioSource    (создаётся кодом)</text>
+    <text x="540" y="316">├ TransparentWindow (для билда)</text>
+    <text x="540" y="336">└ AvatarRoot     [пустой]</text>
+    <text x="556" y="356">└ persona_lilith  ← model.vrm</text>
+    <text x="524" y="380">Main Camera · Directional Light</text>
+  </g>
+
+  <!-- components -->
+  <rect x="828" y="146" width="292" height="248" rx="10" fill="#ffffff" stroke="#93c5fd"/>
+  <text x="844" y="170" font-size="14" font-weight="700" fill="#111827">Компоненты LilithFaceClient</text>
+  <g font-size="12" fill="#374151">
+    <text x="844" y="196">AudioQueueProcessor — PCM → AudioClip</text>
+    <text x="844" y="220">VisemeDriver — RMS+ZCR → aa/ih/ou/ee/oh</text>
+    <text x="844" y="244">EmotionDriver — tag + ttl_ms → поза</text>
+    <text x="844" y="268">IdleController — моргание/дыхание/взгляд</text>
+    <text x="844" y="292">FaceRig — прослойка к UniVRM</text>
+    <text x="844" y="316">MiniJson — разбор кадров</text>
+    <text x="844" y="344" fill="#6b7280">Update(): Tick аудио → виземы →</text>
+    <text x="844" y="362" fill="#6b7280">эмоции → idle; LateUpdate(): взгляд</text>
+    <text x="844" y="384" fill="#6b7280">stats на сервер раз в 5 с (A5)</text>
+  </g>
+
+  <!-- data flow inside unity -->
+  <rect x="508" y="414" width="612" height="120" rx="10" fill="#ffffff" stroke="#93c5fd"/>
+  <text x="524" y="438" font-size="14" font-weight="700" fill="#111827">Поток внутри клиента</text>
+  <g font-size="12" fill="#374151">
+    <text x="524" y="464">audio (base64 2048 Б) → AudioQueueProcessor → AudioSource (кольцевой клип, 24 kHz)</text>
+    <text x="524" y="486">      ↓ окно ~60 мс                                             ↓</text>
+    <text x="524" y="508">VisemeDriver (local, A3.1) ──────────────► FaceRig.SetViseme(aa..oh)</text>
+    <text x="524" y="528">emotion{tag,ttl_ms} → EmotionDriver → FaceRig.SetEmotion · persona → VrmLoader.Swap</text>
+  </g>
+
+  <!-- OBS -->
+  <rect x="508" y="554" width="612" height="102" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="2"/>
+  <text x="524" y="578" font-size="14" font-weight="700" fill="#9a3412">Билд → OBS</text>
+  <g font-size="12" fill="#7c2d12">
+    <text x="524" y="600">TransparentWindow: Dwm (дефолт) | LayeredColorKey (фолбэк) | Off (OBS Color Key)</text>
+    <text x="524" y="620">окно borderless, topmost, справа снизу (dock_bottom_right) · F8 — прозрачность, F9 — угол</text>
+    <text x="524" y="640">Camera: Clear Flags = Solid Color, Background alpha = 0, Allow MSAA = off</text>
+  </g>
+
+  <line x1="815" y1="270" x2="828" y2="270" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="815" y1="330" x2="828" y2="330" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="815" y1="470" x2="828" y2="470" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <text x="40" y="706" font-size="13" font-weight="700" fill="#111827">Групповая сцена (E3/E4):</text>
+  <text x="200" y="706" font-size="12.5" fill="#374151">ws://…/ws/group?group=main → hello-group{participants[{persona,slot,position}], focus} → кадры с полем persona; говорит только фокусная.</text>
+  <text x="40" y="730" font-size="12.5" fill="#6b7280">Проверка без Unity: python scripts/unity_face_probe.py --url ws://127.0.0.1:8765/ws/face/producer --speak "Привет, Кирюша."</text>
+  <text x="40" y="750" font-size="12.5" fill="#6b7280">Тестовое тело до VRoid Studio: python scripts/make_test_vrm.py → tests/samples/test_cube.vrm (процедурный humanoid + blendshapes).</text>
+</svg>

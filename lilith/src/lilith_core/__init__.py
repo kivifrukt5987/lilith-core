@@ -9,13 +9,13 @@
 * ``session``  — менеджер подключений.
 * ``app``      — FastAPI-оркестратор и веб-панель.
 
-Этап 1: скелет (конфиг, логи, HTTP + WebSocket-эхо, мини веб-панель).
+Этап 6: лицо = Unity-клиент (продюсер ``/ws/face/producer``, реестр персон v2,\nLoRA-слот prompt-only, групповые сцены).
 """
 
 from __future__ import annotations
 
-__version__ = "0.5.1"
-__stage__ = 5
+__version__ = "0.6.2"
+__stage__ = 6
 __app_name__ = "LILITH-CORE"
 __codename__ = "LILITH.EXE"
 

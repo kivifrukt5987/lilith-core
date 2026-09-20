@@ -26,9 +26,11 @@ CREATE TABLE IF NOT EXISTS messages (
     role        TEXT NOT NULL,
     content     TEXT NOT NULL,
     profile     TEXT,
+    persona_id  TEXT NOT NULL DEFAULT '',   -- этап 6 (D7-б): от чьего лица запись
     ts          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS ix_messages_agent ON messages (agent_id, id);
+CREATE INDEX IF NOT EXISTS ix_messages_persona ON messages (persona_id, id);
 
 CREATE TABLE IF NOT EXISTS facts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,6 +62,8 @@ class JournalMessage:
     content: str
     profile: str | None
     ts: str
+    #: Этап 6 (D7-б): персона, от чьего лица сделана запись (пусто = agent_id).
+    persona_id: str = ""
 
 
 class Journal:
@@ -79,8 +83,27 @@ class Journal:
         self._db.row_factory = aiosqlite.Row
         async with self._lock:
             await self._db.executescript(_SCHEMA)
+            await self._migrate_locked()
             await self._db.commit()
         logger.info("Журнал памяти открыт: {}", self.db_path)
+
+    async def _migrate_locked(self) -> None:
+        """Дотягивает старую БД до схемы этапа 6 (колонка ``persona_id``, D7-б).
+
+        ``CREATE TABLE IF NOT EXISTS`` не добавляет колонки в существующую таблицу,
+        поэтому старые ``data/lilith.db`` доводятся ``ALTER TABLE`` — идемпотентно.
+        """
+        cursor = await self._conn().execute("PRAGMA table_info(messages)")
+        columns = {str(row[1]) for row in await cursor.fetchall()}
+        if "persona_id" not in columns:
+            await self._conn().execute(
+                "ALTER TABLE messages ADD COLUMN persona_id TEXT NOT NULL DEFAULT ''"
+            )
+            await self._conn().execute(
+                "CREATE INDEX IF NOT EXISTS ix_messages_persona ON messages (persona_id, id)"
+            )
+            await self._conn().execute("UPDATE messages SET persona_id = agent_id WHERE persona_id = ''")
+            logger.info("Журнал: миграция — добавлена колонка persona_id")
 
     async def stop(self) -> None:
         """Закрывает соединение."""
@@ -109,13 +132,17 @@ class Journal:
         session_id: str = "",
         source: str = "webui",
         profile: str | None = None,
+        persona_id: str = "",
     ) -> int:
-        """Пишет реплику в журнал и возвращает её id."""
+        """Пишет реплику в журнал и возвращает её id.
+
+        :param persona_id: от чьего лица запись (этап 6, D7-б); пусто → ``agent_id``.
+        """
         async with self._lock:
             cur = await self._conn().execute(
-                "INSERT INTO messages (agent_id, session_id, source, role, content, profile) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (agent_id, session_id, source, role, content, profile),
+                "INSERT INTO messages (agent_id, session_id, source, role, content, profile, persona_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (agent_id, session_id, source, role, content, profile, persona_id or agent_id),
             )
             await self._conn().commit()
             new_id = int(cur.lastrowid or 0)
@@ -233,4 +260,5 @@ class Journal:
             content=str(row["content"]),
             profile=row["profile"] if row["profile"] is not None else None,
             ts=str(row["ts"]),
+            persona_id=str(row["persona_id"]) if "persona_id" in row.keys() else "",
         )

@@ -1,8 +1,19 @@
-"""Слой «лицо» (этап 5): парсер эмоций + мост в VTuber Studio.
+"""Слой «лицо» (этапы 5–6): эмоции, виземы, персоны, продюсер для Unity.
 
-:class:`FaceCore` связывает реплики с аватаром: из текста вынимаются теги
-``[emotion: …]`` (сам текст от тегов очищается ещё в шине), события уходят в мост
-(хоткеи VTuber Studio) и копятся в состоянии для панели и голоса.
+Этап 5 дал парсер тегов ``[emotion: …]``, мост в VTuber Studio и VRM в веб-панели.
+Этап 6 (**пивот**: лицо = Unity-клиент, three-vrm больше не основной путь) добавляет:
+
+* :mod:`~lilith_core.face.ws_frames` — плоский WS-протокол продюсера;
+* :mod:`~lilith_core.face.producer` — хаб подключений и конвейер реплики
+  (TTS → raw PCM 24 kHz → чанки 2048 байт → кадры ``audio``);
+* :mod:`~lilith_core.face.personas` — реестр персон-агентов v2
+  (``card.yaml`` / ``voice.yaml`` / ``face.yaml``, legacy-фолбэк на ``profile.yaml``);
+* :mod:`~lilith_core.face.lora` — LoRA-слот (этап 6: prompt-only);
+* :mod:`~lilith_core.face.group` — групповые сцены (серверная часть);
+* :mod:`~lilith_core.face.endpoints` — WS-обработчики ``/ws/face/producer`` и ``/ws/group``.
+
+:class:`FaceCore` по-прежнему связывает реплики с аватаром: из текста вынимаются
+теги эмоций, события уходят в мост и копятся в состоянии для панели и голоса.
 """
 
 from __future__ import annotations
@@ -26,7 +37,32 @@ from .emotions import (
     strip_emotion_tags,
 )
 from .bus import FaceBus
-from .personas import Persona, PersonaRegistry
+from .group import GroupFull, GroupManager, GroupMember, GroupSession, UnknownPersona
+from .lora import (
+    LlamaCppLora,
+    LMStudioLora,
+    LocalAiLora,
+    LoraBackend,
+    LoraState,
+    PersonaLoraManager,
+    PromptOnlyLora,
+    build_lora_manager,
+)
+from .personas import (
+    CARD_FILE,
+    FACE_FILE,
+    VOICE_FILE,
+    IdleSpec,
+    LoraSpec,
+    Persona,
+    PersonaCard,
+    PersonaFace,
+    PersonaRegistry,
+    PersonaVoice,
+    WindowSpec,
+)
+from .producer import FaceProducerHub, ProducerClient, Utterance
+from . import ws_frames
 from .visemes import VISEME_TO_VRM, VISEME_WINDOWS, VisemeFrame, analyze_window, extract_visemes
 from .vtuber_bridge import FaceBridge, MockFaceBridge, NullFaceBridge, VmcBridge, VTuberStudioBridge
 
@@ -52,6 +88,32 @@ __all__ = [
     "FaceBus",
     "Persona",
     "PersonaRegistry",
+    "PersonaCard",
+    "PersonaVoice",
+    "PersonaFace",
+    "WindowSpec",
+    "LoraSpec",
+    "IdleSpec",
+    "CARD_FILE",
+    "VOICE_FILE",
+    "FACE_FILE",
+    "FaceProducerHub",
+    "ProducerClient",
+    "Utterance",
+    "ws_frames",
+    "LoraBackend",
+    "PromptOnlyLora",
+    "LocalAiLora",
+    "LMStudioLora",
+    "LlamaCppLora",
+    "LoraState",
+    "PersonaLoraManager",
+    "build_lora_manager",
+    "GroupManager",
+    "GroupSession",
+    "GroupMember",
+    "GroupFull",
+    "UnknownPersona",
     "VisemeFrame",
     "VISEME_WINDOWS",
     "VISEME_TO_VRM",

@@ -141,7 +141,7 @@ voice:
   packs_manifest: "models/packs.yaml"
   packs_root: ""
 
-# --- ЭТАП 5: лицо ------------------------------------------------------------
+# --- ЭТАП 5–6: лицо (VRM в панели → Unity-продюсер) ------------------------------------------------------------
 face:
   vtuber_studio_enabled: false         # true, когда VTuber Studio запущена с API
   vtuber_studio_url: "ws://localhost:8001"
@@ -159,7 +159,26 @@ face:
                                        #   joy: "abc123"
                                        #   smug: "def456"
 
-# --- ЭТАП 6: руки ------------------------------------------------------------
+  # --- ЭТАП 6: продюсер лица для Unity-клиента (пивот: three-vrm больше не основной путь)
+  producer_path: "/ws/face/producer"   # сокет для Unity/OBS; /ws/unity — алиас
+  group_path: "/ws/group"              # групповые сцены (один сокет на группу)
+  producer_sample_rate: 24000          # A2: фиксируем 24 kHz, паки стандартизуем в voice.yaml
+  producer_chunk_bytes: 2048           # A1-а: raw PCM int16 mono, ровно 2048 байт на чанк
+  emotion_ttl_ms: 4000                 # A3.3: сброс эмоции делает Unity по этому TTL
+  web_vrm_enabled: false               # B1-б: VRM в веб-панели жив, но выключен (основной путь — Unity)
+
+  # --- ЭТАП 6: LoRA-слот персон (D10-а: prompt-only, веса не грузятся) ---------
+  lora_backend: "prompt-only"          # prompt-only | localai | lmstudio | llama-cpp (стабы)
+  lora_dir: ""                         # корень для относительных путей из card.yaml: lora.path
+  lora_scale: 1.0                      # глобальный множитель (перекрывает lora.scale персоны)
+  lora_autoload: false                 # грузить адаптер при свопе персоны
+  lora_base_url: ""                    # OpenAI-совместимый endpoint для HTTP-бэкендов
+
+  # --- ЭТАП 6: групповые сцены (E1/E4) ----------------------------------------
+  group_max_participants: 4            # E1: потолок участников сцены
+  group_file: ""                       # E4: рассадка (slot/position) поверх face.yaml персон
+
+# --- ЭТАП 7: руки (был 6-м; сдвинут пивотом Unity-лица) ------------------------------------------------------------
 hands:
   confirm_timeout_sec: 25.0                # баннер подтверждения в веб-панели
   require_confirmation: true
@@ -171,7 +190,7 @@ hands:
   obs_port: 4455
   obs_password_env: "LILITH_OBS_PASSWORD"
 
-# --- ЭТАП 7: мосты -----------------------------------------------------------
+# --- ЭТАП 8: мосты (был 7-м) -----------------------------------------------------------
 bridges:
   discord_enabled: false
   discord_token_env: "LILITH_DISCORD_TOKEN"
@@ -180,7 +199,7 @@ bridges:
   vk_token_env: "LILITH_VK_TOKEN"
   vk_group_id: 0
 
-# --- ЭТАП 8: стрим и сервис --------------------------------------------------
+# --- ЭТАП 9: стрим и сервис (был 8-м) --------------------------------------------------
 stream:
   twitch_enabled: false
   twitch_token_env: "LILITH_TWITCH_TOKEN"
@@ -196,6 +215,6 @@ features:
                                            # (или запускай с флагом --mock-brain для демо)
   memory_enabled: true                     # журнал + RAG + авто-саммари (этап 3)
   voice_enabled: true                      # уши/горло; без .[voice] озвучка = mock-бип
-  face_enabled: true                       # VRM-сцена в панели (этап 5)
+  face_enabled: true                       # лицо: продюсер для Unity + эмоции (этапы 5–6)
   hands_enabled: false
   bridges_enabled: false

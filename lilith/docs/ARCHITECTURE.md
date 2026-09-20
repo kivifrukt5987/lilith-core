@@ -208,3 +208,103 @@ profile = settings.brain.resolve(name)   # name=None -> default_profile
   «Агенты» и «3D-модели» этапа 8 (ADR-013).
 * Вендор three.js/three-vrm лежит в `webui/vendor/`: панель офлайн-самодостаточна.
 * VTuber Studio и VMC — опциональные внешние адаптеры, не зависимости ядра.
+
+
+## 9.8. Слой лица v2 (этап 6, ПИВОТ: лицо = Unity-клиент)
+
+**Отменяет** ADR-014 в части «three-vrm — основной путь»: веб-панель остаётся
+диагностическим фолбэком (`face.web_vrm_enabled: false`), лицом становится Unity-окно.
+
+### Контракт продюсера `/ws/face/producer`
+
+Плоские JSON-кадры (решение A4-а), без общего конверта `{id,type,text,data,ts}`:
+
+```jsonc
+// сервер → клиент
+{"type":"hello","producer":"lilith-face","protocol":"1.0","sample_rate":24000,
+ "format":"pcm_s16le","chunk_bytes":2048,"persona":"lilith","server_version":"0.6.0",
+ "personas":["lilith","nova"]}
+{"type":"audio","data":"<base64 2048 Б>","bytes":2048,"seq":0,"offset_ms":0,
+ "utterance_id":"u-7f3a","sample_rate":24000,"final":false,"persona":"lilith"}
+{"type":"viseme","code":"A","intensity":0.72,"offset_ms":60,"utterance_id":"u-7f3a","seq":1}
+{"type":"emotion","tag":"joy","intensity":0.8,"ttl_ms":4000,"utterance_id":"u-7f3a"}
+{"type":"persona","id":"nova","swap":true,"reason":"api","vrm":"/api/face/personas/nova/model.vrm",
+ "voice":{"pack":"lilith","speaker":"kseniya"},"card":{...},"face":{"idle":{"blink_freq":0.3}}}
+{"type":"focus","persona":"nova","group":"main","reason":"speaking"}
+{"type":"stop","utterance_id":"u-7f3a","reason":"barge_in"}
+{"type":"done","utterance_id":"u-7f3a","reason":"eof","chunks":12}
+{"type":"state",...} {"type":"error","code":"...","detail":"..."} {"type":"pong","ping_id":"p-1"}
+
+// клиент → сервер (A5)
+{"type":"hello","client":"unity/6000.0.21f1","want_server_visemes":false,"platform":"WindowsPlayer"}
+{"type":"ready"}
+{"type":"persona_request","id":"nova"}
+{"type":"speak","text":"..."}
+{"type":"stats","fps":60,"dropped":0,"queued_ms":180,"playing":true,"viseme":"A","emotion":"joy"}
+{"type":"ping"}
+```
+
+Правила, которые нельзя нарушать:
+
+| Правило | Почему |
+|---|---|
+| Аудио — **raw PCM int16 mono**, не WAV | Unity кладёт байты в `AudioClip.SetData` без разбора заголовка (A1-а) |
+| Чанк **ровно 2048 байт**, кроме последнего (`final:true`) | клиент знает размер буфера заранее и не пересобирает его на лету |
+| `sample_rate` объявляется в `hello`, сервер приводит поток к нему сам | TTS-паки бывают 16/24/48 kHz, а клиент не должен ресемплить (A2) |
+| `seq` и `offset_ms` сквозные в пределах `utterance_id` | порядок восстанавливается даже если кадры легли пачкой |
+| Серверные `viseme` — только по `want_server_visemes` | основной путь: Unity считает виземы из PCM сам (A3.1) |
+| `emotion.ttl_ms` гасит клиент, не сервер | сервер не знает, когда лицо успело доехать (A3.3) |
+| `stop` с `utterance_id` | клиент дропает чанки этой реплики, не дожидаясь `done` (A3.4) |
+| `/ws/unity` — алиас продюсера, но **первым** кадром шлёт legacy-`hello` этапа 5 | старые клиенты и тесты не ломаются (A6.1-б) |
+| Основной `/ws` продолжает стримить `face{kind:...}` в панель | панель остаётся живой диагностикой (A6.2) |
+
+### Слои
+
+```
+voice/tts.py            WAV по предложениям (silero/edge/mock)
+      ↓
+voice/pcm.py            resample_pcm16(→24 kHz) · PcmChunker(2048 Б) · AudioChunk
+      ↓
+face/producer.py        FaceProducerHub: подключения, реплики, stop/focus/swap, want_server_visemes
+      ↓
+face/ws_frames.py       плоские кадры контракта (единственное место, где они собираются)
+      ↓
+face/endpoints.py       /ws/face/producer · /ws/group · /ws/unity(алиас)
+```
+
+* `face/personas.py` v2: `card.yaml`/`voice.yaml`/`face.yaml` + legacy-фолбэк на
+  `profile.yaml`; активная персона (`registry.active`, `set_active`), разрешение
+  `vrm_path` **вне репозитория**; папки на `_`/`.` персонами не считаются.
+* `face/lora.py`: `LoraBackend` (интерфейс) + `PromptOnlyLora` (рабочий дефолт) +
+  стабы `LocalAiLora`/`LMStudioLora`/`LlamaCppLora`; `PersonaLoraManager.apply()`
+  вызывается при свопе персоны.
+* `face/group.py`: `GroupSession` (потолок `face.group_max_participants`=4, слоты,
+  фокус) и `GroupManager` (рассадка из `group.yaml` поверх `face.yaml`),
+  один сокет на группу с мультиплексированием по полю `persona`.
+* Память (этап 6 = только интерфейс, D7): `messages.persona_id` + миграция `ALTER TABLE`,
+  `MemoryCore.remember_turn(persona_id=…)`, в RAG-метаданные добавлен `persona_id`.
+  Полноценная персональная память — **этап 6.5**.
+
+### Unity-клиент (`unity-client/`)
+
+7 скриптов + конфиг + `MiniJson` (свой парсер, внешних пакетов нет) + `FaceRig`
+(всё API UniVRM под `#if LILITH_UNIVRM`, символ включается сам через `versionDefines`
+в `.asmdef`). Транспорт — встроенный `System.Net.WebSockets.ClientWebSocket`.
+Приём в фоновой задаче → очередь → разбор строго в `Update()` (Unity API не потокобезопасен).
+Сборка и схема сцены — `unity-client/Assets/LilithFace/README.md` и `SCENE.md`.
+
+### Проверка без Unity
+
+`scripts/unity_face_probe.py` — эмулятор клиента на чистом stdlib (свой WS):
+подключается, просит реплику, проверяет размер/порядок/смещения чанков, виземы,
+`done`, своп персоны, групповую сцену; пишет JSON-отчёт и возвращает код 0/1.
+Это и есть доказательство критерия готовности этапа в песочнице (F6-а+б).
+
+### Legacy-адаптеры лица (решение Q4, v0.6.2)
+
+`face/vtuber_bridge.py` (VTuber Studio API) и слот `VmcBridge` (VMC/OSC) остаются
+**опциональными внешними адаптерами под флагом** (`face.vtuber_studio_enabled`,
+`face.vmc_enabled` — оба `false` в поставке). В этапе 7 они **не развиваются**,
+в доках помечаются **legacy**: основной путь лица — Unity-продюсер. Основание:
+в разборе «Нейроны» (`docs/NEURONA_NOTES.md` §3) VMC/OSC-моста нет — Unity-клиент
+ходит в продюсер напрямую.

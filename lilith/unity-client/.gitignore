@@ -1,0 +1,63 @@
+# Unity-клиент LILITH-CORE (этап 6).
+# В репозитории живут ТОЛЬКО: Assets/LilithFace/**, Packages/manifest.json и доки.
+# Всё остальное Unity генерирует сама — и это гигабайты.
+
+# --- Unity: кэш и временные каталоги ---
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# --- Unity: сгенерированные файлы проекта ---
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# --- Unity: метаданные удалённых ассетов ---
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# --- Unity: краш-отчёты и пакеты ---
+sysinfo.txt
+*.stackdump
+crashlytics-build.properties
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# --- IDE ---
+.vs/
+.idea/
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+.gradle/
+
+# --- ОС ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Тела персон: VRM тяжелее десятков мегабайт, git их не таскает (D5.4) ---
+# Модель лежит ВНЕ репозитория, путь к ней — в personas/<id>/face.yaml: vrm_path.
+# Процедурное тестовое тело (21 КБ) живёт в tests/samples/test_cube.vrm — это
+# вне unity-client/, поэтому под правило не попадает и остаётся в репозитории.
+*.vrm

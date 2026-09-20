@@ -1,0 +1,49 @@
+# LILITH-CORE · правила оформления (решение F8)
+# Python: 4 пробела, строки до 110 символов (ruff line-length из pyproject.toml).
+# C# (unity-client): 4 пробела, Allman, file-scoped namespaces НЕ используем
+# (UniVRM и Unity-код вокруг — с блочными; единообразие важнее моды),
+# nullable отключён (Unity 6 + Mono его поддерживает, но весь существующий код без него).
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{yaml,yml,json,md}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{bat,cmd}]
+# cmd.exe надёжно парсит bat-файлы только с CRLF и в чистом ASCII (хотфикс 0.1.1)
+end_of_line = crlf
+charset = latin1
+
+[*.cs]
+indent_size = 4
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = true
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_style_namespace_declarations = block_scoped:suggestion
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_prefer_braces = true:warning
+csharp_using_directive_placement = outside_namespace:warning
+dotnet_sort_system_directives_first = true
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:suggestion
+
+[*.py]
+max_line_length = 110

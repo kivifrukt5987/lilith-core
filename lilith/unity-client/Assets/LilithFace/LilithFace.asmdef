@@ -1,0 +1,25 @@
+{
+    "name": "LilithFace",
+    "rootNamespace": "Lilith.Face",
+    "references": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.vrmc.vrm",
+            "expression": "",
+            "define": "LILITH_UNIVRM"
+        },
+        {
+            "name": "com.vrmc.univrm",
+            "expression": "",
+            "define": "LILITH_UNIVRM"
+        }
+    ],
+    "noEngineReferences": false
+}

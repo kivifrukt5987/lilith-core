@@ -36,6 +36,22 @@ models/
 artifacts/*.zip
 artifacts/*.whl
 
+# --- Unity (unity-client/, этап 6) ---
+# подробнее — unity-client/.gitignore
+unity-client/Library/
+unity-client/Temp/
+unity-client/Obj/
+unity-client/Build/
+unity-client/Builds/
+unity-client/Logs/
+unity-client/UserSettings/
+unity-client/*.csproj
+unity-client/*.sln
+*.unitypackage
+# тела персон лежат вне репозитория (D5.4), кроме процедурного тест-куба
+*.vrm
+!tests/samples/test_cube.vrm
+
 # --- ОС / редакторы ---
 Thumbs.db
 Desktop.ini

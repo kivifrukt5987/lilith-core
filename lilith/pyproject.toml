@@ -68,7 +68,12 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra --strict-markers"
 asyncio_mode = "auto"
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    # starlette>=0.47 предупреждает про httpx внутри своего TestClient. Это обвязка
+    # starlette, а не наш код; httpx у нас — осознанная dev-зависимость (приёмка 0.6.2).
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated.*",
+]
 
 [tool.ruff]
 line-length = 110

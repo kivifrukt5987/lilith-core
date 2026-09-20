@@ -4,14 +4,16 @@
 Всё живёт локально на машине Кирюши, мозг — любой OpenAI-совместимый endpoint (LM Studio, llama.cpp,
 vLLM, Ollama, OpenRouter).
 
-**Текущий статус: ЭТАП 1 — «Скелет»** (конфиг, логи, FastAPI + WebSocket-эхо, мини веб-панель).
+**Текущий статус: ЭТАП 6 — «Лицо = Unity-клиент»** (пивот: продюсер `/ws/face/producer`,
+реестр персон v2, LoRA-слот prompt-only, групповые сцены, `unity-client/`).
 
 | | |
 |---|---|
-| Версия | `0.5.0` (этап 5: лицо — VRM-вьювер в панели, виземы, эмоции, персоны) |
-| Этап | 5 из 8 (`face`) — лицо в панели, ждём «дальше» для этапа 6 |
+| Версия | `0.6.2` (этап 6 + ADR-020/ADR-021: приёмы «Нейроны», ответы Q1–Q5, три красных приёмки закрыты) |
+| Этап | 6 из 9 (`face-unity`) — ждём сборки Unity у Кирюши и команду «дальше» для этапа 7 |
 | Python | 3.11+ |
-| Тесты | **477 passed** (pytest) |
+| Тесты | **665 passed** (pytest), 0 warnings |
+| Unity | **6000.0.x LTS** (у Кирюши 6000.0.84f1) · Built-in RP · UniVRM 0.131.2 · VRM 1.0 |
 | Целевая машина | Windows 11, RTX 3060 12GB, i7-12700KF, 32GB RAM |
 
 ---
@@ -20,14 +22,16 @@ vLLM, Ollama, OpenRouter).
 
 | Этап | Слой | Что делаем | Статус |
 |------|------|-----------|--------|
-| **1** | **Скелет** | конфиг (YAML + `.env`, pydantic-settings), loguru, FastAPI + uvicorn, WebSocket `/ws` эхо, мини веб-панель | ✅ **готово** |
-| 2 | Мозг | `brain/llm.py` — OpenAI-совместимый клиент, чат-цикл с `persona.md`, логирование ток/сек, mock в тестах | ⏳ ждёт команды «дальше» |
-| 3 | Память | aiosqlite-журнал (сообщения, факты), chromadb-RAG, саммаризатор каждые N сообщений | ⏳ |
-| 4 | Уши и горло | `voice/stt.py` (faster-whisper + silero-vad + push-to-talk), `voice/tts.py` (silero-tts, фолбэк edge-tts) | ⏳ |
-| 5 | Лицо | `face/emotions.py` (парсер `[emotion: X]`), `face/vtuber_bridge.py` (WS к VTuber Studio, VMC, реконнект) | ⏳ |
-| 6 | Руки | `hands/tools.py` (psutil-виталс, playwright open_url, obs-websocket) + баннер подтверждения на 25 с (Human-in-the-Loop) | ⏳ |
-| 7 | Мосты | `bridges/discord_bot.py` (discord.py), `bridges/vk_bot.py` (vkbottle) — один мозг, общая память | ⏳ |
-| 8 | Стрим и сервис | twitchio-триггеры, сцены OBS, docker-compose (searxng, redis), автозапуск `.bat`, бэкап репо | ⏳ |
+| **1** | **Скелет** | конфиг (YAML + `.env`, pydantic-settings), loguru, FastAPI + uvicorn, WebSocket `/ws` эхо, мини веб-панель | ✅ готово · v0.1.2 |
+| **2** | **Мозг** | `brain/llm.py` — OpenAI-совместимый клиент, реестр профилей, чат-цикл с `persona.md`, стриминг, ток/сек | ✅ готово · v0.2.1 |
+| **3** | **Память** | aiosqlite-журнал, chromadb-RAG (HashEmbedder), саммаризатор с настраиваемым порогом | ✅ готово · v0.3.1 |
+| **4** | **Уши и горло** | `voice/stt.py` (faster-whisper + silero-vad + push-to-talk), `voice/tts.py` (silero/edge/zero-shot), паки моделей | ✅ готово · v0.4.2 |
+| **5** | **Лицо v1→v2** | `face/emotions.py` (парсер `[emotion: X]`), VTuber Studio/VMC-адаптер → затем VRM в панели, виземы, реестр персон | ✅ готово · v0.5.1 |
+| **6** | **Лицо = Unity** | **ПИВОТ**: продюсер `/ws/face/producer` (raw PCM 24 kHz / 2048 Б), персоны v2 (`card`/`voice`/`face.yaml`), LoRA-слот prompt-only, группы `/ws/group`, `unity-client/` (7 C#-скриптов) | ✅ **готово** · v0.6.0 |
+| 6.5 | Память персон | своя область памяти на персону (chroma-коллекции с префиксом, выборка по `memory_scope`) | ⏳ запланировано |
+| 7 | Руки | `hands/tools.py` (psutil-виталс, playwright open_url, obs-websocket) + баннер подтверждения на 25 с (Human-in-the-Loop) | ⏳ |
+| 8 | Мосты | `bridges/discord_bot.py` (discord.py), `bridges/vk_bot.py` (vkbottle) — один мозг, общая память | ⏳ |
+| 9 | Стрим и сервис | twitchio-триггеры, сцены OBS, docker-compose (searxng, redis), автозапуск `.bat`, бэкап репо | ⏳ |
 
 ---
 
@@ -126,7 +130,7 @@ pytest -q
 Ожидаемый результат этапа 1:
 
 ```
-477 passed
+665 passed
 ```
 
 Покрытие: конфиг и приоритет источников, секреты не протекают в логи/healthz,
@@ -200,15 +204,37 @@ asyncio.run(main())
 │   ├── persona/
 │   │   ├── __init__.py        # загрузка persona.md + плейсхолдеры
 │   │   └── persona.md         # системный промт Лилит
+│   ├── voice/
+│   │   ├── stt.py · tts.py · packs.py · hotkey.py
+│   │   └── pcm.py             # ЭТАП 6: ресемплинг + PcmChunker (2048 Б)
+│   ├── face/
+│   │   ├── emotions.py · visemes.py · bus.py · vtuber_bridge.py
+│   │   ├── personas.py        # ЭТАП 6: card/voice/face.yaml + legacy-фолбэк
+│   │   ├── ws_frames.py       # ЭТАП 6: плоские кадры продюсера
+│   │   ├── producer.py        # ЭТАП 6: FaceProducerHub (реплики, stop, focus, swap)
+│   │   ├── endpoints.py       # ЭТАП 6: /ws/face/producer · /ws/group · /ws/unity(алиас)
+│   │   ├── lora.py            # ЭТАП 6: PersonaLoraManager (prompt-only) + стабы
+│   │   └── group.py           # ЭТАП 6: групповые сцены (потолок 4, слоты, фокус)
 │   └── webui/
-│       └── index.html         # мини веб-панель (один файл, без CDN)
-├── tests/                     # 477 тестов
+│       ├── index.html         # мини веб-панель (VRM-сцена под флагом web_vrm_enabled)
+│       └── vendor/            # three.js/three-vrm — фолбэк-путь этапа 5
+├── unity-client/              # ЭТАП 6: Unity-клиент лица (C#, UniVRM 0.131.2)
+│   ├── Packages/manifest.json
+│   └── Assets/LilithFace/     # 7 скриптов + README.md (сборка) + SCENE.md/SVG (схема сцены)
+├── personas/
+│   ├── lilith/                # card.yaml · voice.yaml · face.yaml · persona.md · fallback.jpg
+│   └── _template/             # заготовка новой персоны (реестр её не считает)
+├── tests/                     # 665 тестов
 ├── scripts/
 │   ├── ws_client.py           # ручная проверка шины из консоли (-i = диалог)
+│   ├── unity_face_probe.py    # ЭТАП 6: эмулятор Unity-клиента (проверка тракта без Unity)
+│   ├── make_test_vrm.py       # ЭТАП 6: генератор тестовой VRM 1.0 (процедурный куб)
 │   └── build_stage_archive.py # сборка zip-архива этапа в artifacts/
 ├── logs/                      # lilith.log (создаётся автоматически)
 ├── artifacts/                 # zip-архивы этапов
-├── docs/ARCHITECTURE.md       # архитектура и контракты между этапами
+├── docs/ARCHITECTURE.md       # архитектура и контракты между этапами (9.8 — продюсер лица)
+├── docs/DECISIONS.md          # журнал решений: ADR-001…ADR-019
+├── docs/NEURONA_NOTES.md      # разбор «Нейроны» (furrydev2007) как референса пивота
 ├── CHANGELOG.md               # что сделано на каждом этапе
 ├── start.bat                  # запуск на Windows
 ├── run_tests.bat              # прогон тестов на Windows
@@ -224,13 +250,13 @@ asyncio.run(main())
 
 ```
 src/lilith_core/
-├── brain/     # этап 2: llm.py, chat.py, tokenizer_stats.py
-├── memory/    # этап 3: journal.py, rag.py, summarizer.py
-├── voice/     # этап 4: stt.py, vad.py, tts.py, hotkey.py
-├── face/      # этап 5: emotions.py, vtuber_bridge.py, vmc.py
-├── hands/     # этап 6: tools.py, registry.py, confirm.py
-├── bridges/   # этап 7: discord_bot.py, vk_bot.py, base.py
-└── stream/    # этап 8: twitch.py, obs.py, service.py
+├── brain/     # этап 2: llm.py, chat.py, stats.py        ✅
+├── memory/    # этап 3: journal.py, rag.py, summarizer.py ✅ (6.5 — память персон)
+├── voice/     # этап 4: stt.py, tts.py, packs.py + pcm.py (этап 6) ✅
+├── face/      # этапы 5–6: эмоции, виземы, персоны, продюсер, группы, LoRA ✅
+├── hands/     # этап 7: tools.py, registry.py, confirm.py
+├── bridges/   # этап 8: discord_bot.py, vk_bot.py, base.py
+└── stream/    # этап 9: twitch.py, obs.py, service.py
 ```
 
 Контракт между слоями уже зафиксирован: `echo.build_reply_handler(settings)` возвращает
@@ -265,7 +291,159 @@ src/lilith_core/
 
 ---
 
-## 😊 Лицо: VRM в панели, виземы, персоны (этап 5 готов)
+## 🎭 Лицо = Unity-клиент (этап 6 готов) — ПИВОТ
+
+Включается флагом `features.face_enabled: true` или `--with-face`.
+Код сервера: `face/producer.py`, `face/ws_frames.py`, `face/endpoints.py`,
+`face/personas.py`, `face/lora.py`, `face/group.py`, `voice/pcm.py`.
+Код клиента: `unity-client/` (инструкция сборки — `unity-client/Assets/LilithFace/README.md`).
+
+**Что изменилось:** three-vrm больше не основной путь (ADR-015). Лицо — отдельное
+Unity-окно: прозрачное, живёт справа снизу на рабочем столе, захватывается OBS.
+Веб-панель осталась диагностикой: debug-оверлей, фолбэк-аватар, селектор персон,
+а VRM-сцена в ней включается флагом `face.web_vrm_enabled` (по умолчанию `false`).
+
+### Продюсер `/ws/face/producer`
+
+Сервер отдаёт **плоские JSON-кадры** (без общего конверта) — так C#-клиенту нечего
+разворачивать, а на 12 кадрах в секунду это заметный трафик:
+
+| Кадр | Что несёт |
+|---|---|
+| `hello` | `producer`, `protocol`, `sample_rate` **24000**, `format` **pcm_s16le**, `chunk_bytes` **2048**, активная `persona`, список `personas`, `server_version` |
+| `audio` | base64 **raw PCM int16 mono**, ровно 2048 байт (1024 сэмпла), `seq`, `offset_ms`, `utterance_id`, `final` |
+| `viseme` | серверная разметка A/I/U/E/O — **только** если клиент попросил `want_server_visemes` |
+| `emotion` | `tag`, `intensity`, `ttl_ms` (гасит эмоцию **клиент**, не сервер) |
+| `persona` | своп: `id`, `vrm`, `voice{pack,speaker}`, `card`, `face{idle,…}` |
+| `focus` | на кого смотреть камере (групповая сцена) |
+| `stop` | прервать реплику: клиент дропает чанки с этим `utterance_id` |
+| `done` | конец реплики + число чанков |
+| `state` / `error` / `pong` | служебное |
+
+Клиент → сервер: `hello` (с `want_server_visemes`), `ready`, `persona_request`,
+`speak`, `stats{fps,dropped,queued_ms,…}` раз в 5 с, `ping`.
+
+`/ws/unity` сохранён **алиасом** продюсера: первым кадром отдаёт legacy-`hello`
+этапа 5, дальше работает по полному протоколу. Основной `/ws` по-прежнему стримит
+`face{kind:audio|viseme|done}` в веб-панель — оба потребителя получают один `utterance_id`.
+
+### Персоны-агенты v2
+
+```
+personas/<id>/
+├── card.yaml    # id, display_name, brain_profile, greeting, tags,
+│                # lora{path,trigger_word,scale,autoload}, tools[], memory_scope
+├── voice.yaml   # pack, speaker, sample_rate 24000, speed, pitch_shift,
+│                # fallback_pack, reference_wav
+├── face.yaml    # vrm_path (тело ВНЕ репо), fallback, slot/position для группы,
+│                # idle{blink_freq,breath_amp,look_speed}, оверрайды эмоций/визем
+├── persona.md   # душа
+└── fallback.jpg # статичный аватар
+```
+
+* Старый `profile.yaml` продолжает читаться (legacy-фолбэк) — миграция не обязательна.
+* Папки на `_`/`.` персонами не считаются: `personas/_template/` — заготовка.
+* `GET /api/face/personas` — публичная сводка (карточка целиком **не** отдаётся);
+  `GET /api/personas` — алиас этапа 5.
+* `GET /api/face/personas/<id>/model.vrm` — отдаёт тело по пути из `face.yaml`
+  (модель может лежать где угодно на диске).
+* `POST /api/face/personas/<id>/activate` — глобальный своп: рассылает кадр `persona`
+  всем подключённым клиентам. То же из Unity (`persona_request`) и из панели (селектор 🎭).
+* **LoRA** — слот интерфейсный (`PersonaLoraManager`): этап 6 работает в режиме
+  **prompt-only**, бэкенды LocalAi/LM Studio/llama.cpp объявлены стабами.
+* **Память** — в этапе 6 добавлена только колонка `messages.persona_id` (+ автоматическая
+  миграция старых БД) и `memory_scope` в карточке. Полноценная персональная память — **этап 6.5**.
+
+### Групповые сцены `/ws/group`
+
+Один сокет на группу, кадры мультиплексируются полем `persona`. Первым приходит
+`hello-group` с составом и рассадкой (`participants[{persona,slot,position}]`,
+потолок `face.group_max_participants: 4`, текущий `focus`). Рассадка — `group.yaml`
+поверх `face.yaml`. Говорит только фокусная персона: «хор» запрещён, запрос от
+не-фокусной получает `error{code:"not_focused"}`. Камера — на стороне Unity,
+OBS-сцены — этап 9. В этом этапе готова **серверная часть и контракт**; Unity-сцена
+группы — следующий шаг.
+
+### Unity-клиент
+
+`unity-client/Assets/LilithFace/Scripts/`:
+
+| Скрипт | За что отвечает |
+|---|---|
+| `LilithFaceClient.cs` | оркестратор: кадры → драйверы, `stats` раз в 5 с, debug-оверлей |
+| `LilithWSClient.cs` | WS-транспорт на встроенном `ClientWebSocket` + автореконнект |
+| `LilithClientConfig.cs` | все настройки в инспекторе (URL, окно, виземы, idle) |
+| `AudioQueueProcessor.cs` | чанки PCM → кольцевой `AudioClip` → `AudioSource` |
+| `VisemeDriver.cs` | RMS + zero-crossing по окну 60 мс → `aa/ih/ou/ee/oh` (тот же алгоритм, что на сервере) |
+| `EmotionDriver.cs` | `tag` + `ttl_ms` → экспрессии VRM 1.0, плавное сведение |
+| `IdleController.cs` | моргание, дыхание 0.25 Гц, взгляд за курсором |
+| `VrmLoader.cs` | горячий своп тела (`Vrm10.LoadBytesAsync`): с диска или по HTTP |
+| `TransparentWindow.cs` | DWM / color key / off, borderless + topmost, справа снизу, F8·F9 |
+| `FaceRig.cs` | прослойка к UniVRM (всё под `#if LILITH_UNIVRM`) |
+| `MiniJson.cs` | свой JSON-парсер: внешних пакетов у клиента нет |
+
+### Приёмы «Нейроны» (ADR-020, v0.6.1)
+
+Разбор стека furrydev2007 (`docs/NEURONA_NOTES.md`) дал четыре заимствования —
+**приёмы, а не продукты**:
+
+1. **Sample-accurate очередь визем** — виземы привязываются к позиции в аудио-буфере
+   в сэмплах, а не к такту `Update()`. Включается в инспекторе:
+   `Use Sample Accurate Visemes` (+ `Request Server Visemes` для серверной разметки).
+   **Дефолт выключен**: `offset_ms` остаётся основным путём.
+2. **Японские имена блендшейпов** — `FaceRig` понимает `あ/い/う/え/お` и
+   `笑い/怒り/悲しみ/驚き/瞬き` и на входе, и как fallback через
+   `ExpressionKey.CreateCustom`, если в модели нет пресета VRM 1.0. Фолбэк не слепой:
+   при `Bind()` снимается список реально имеющихся экспрессий.
+3. **Nonverbal-слот** в `personas/<id>/voice.yaml` (`laugh/sigh/hum/cry`) — объявлен,
+   доезжает до Unity в кадре `persona.voice`; синтез отложен до этапа голоса.
+4. **Спека этапа 7** (`docs/STAGE7_HANDS_SPEC.md`) — sandbox-воркспейс + confine +
+   гарантированный cleanup (US2) и сессионные пермишены с лимитами ресурсов (US3),
+   8 user stories в Given/When/Then, quality gates и «конституция» = `DECISIONS.md`.
+
+Не повторяем осознанно: SALSA (платный ассет), облачный OpenAI, Postgres+Qdrant,
+NVIDIA Riva, Claude Code/SpecKit как продукты.
+
+### Проверка без Unity
+
+```bat
+:: сервер
+start.bat
+
+:: в другом окне: эмулятор Unity-клиента (чистый stdlib, зависимостей нет)
+python scripts\unity_face_probe.py --url ws://127.0.0.1:8765/ws/face/producer --speak "Привет, Кирюша."
+
+:: то же с серверными виземами и свопом персоны
+python scripts\unity_face_probe.py --speak "Раз два три." --want-server-visemes --persona nova
+
+:: групповая сцена
+python scripts\unity_face_probe.py --url ws://127.0.0.1:8765/ws/group --group main --speak "Раз."
+
+:: JSON-отчёт (приложить к отчёту по этапу)
+python scripts\unity_face_probe.py --speak "Проверка." --json probe.json
+```
+
+Проба проверяет: размер каждого чанка (ровно 2048 Б), непрерывность `seq`,
+монотонность `offset_ms`, кратность байт двум, приход `done`, наличие/отсутствие
+серверных визем, своп персоны. Код возврата `0/1` — можно вешать в CI.
+
+**Тестовое тело** (пока Кирюша не напечатал настоящее в VRoid Studio):
+
+```bat
+python scripts\make_test_vrm.py --out personas\lilith\model.vrm --name Lilith
+```
+
+Собирает валидный **VRM 1.0** на чистом stdlib: 55 humanoid-костей в T-позе,
+два скиннутых меша, 11 морф-таргетов и все экспрессии (`aa ih ou ee oh`,
+`happy angry sad relaxed surprised`, `blink`). ~21 КБ; копия для тестов лежит в
+`tests/samples/test_cube.vrm`.
+
+---
+
+## 😊 Лицо v2: VRM в панели (этап 5) — теперь фолбэк-путь
+
+> **Этап 6 перевёл лицо в Unity.** Раздел ниже описывает браузерный путь; он жив,
+> но выключен флагом `face.web_vrm_enabled: false`. Основной путь — `unity-client/`.
 
 Включается флагом `features.face_enabled: true` или `--with-face`.
 

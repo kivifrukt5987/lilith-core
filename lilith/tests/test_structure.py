@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_DIR = PROJECT_ROOT / "src" / "lilith_core"
 
 
@@ -84,7 +85,7 @@ class TestImports:
         import lilith_core
 
         assert re.match(r"^\d+\.\d+\.\d+$", lilith_core.__version__)
-        assert lilith_core.__stage__ == 5
+        assert lilith_core.__stage__ == 6
         assert lilith_core.__codename__ == "LILITH.EXE"
 
 
@@ -316,9 +317,10 @@ class TestBatchFiles:
         блоке ещё старым значением - pip ставил пакеты не в тот интерпретатор.
         """
         lines = (PROJECT_ROOT / "start.bat").read_text(encoding="ascii").splitlines()
+        # raw-строка: в py3.12+ одиночный "\S" даёт SyntaxWarning (приёмка 0.6.2)
         switch = next(
             i for i, ln in enumerate(lines)
-            if ln.strip() == 'set "PYTHON=.venv\Scripts\python.exe"'
+            if ln.strip() == r'set "PYTHON=.venv\Scripts\python.exe"'
         )
         assert not lines[switch].startswith(" "), "set PYTHON обязан быть верхним уровнем"
         venv = next(i for i, ln in enumerate(lines) if "-m venv .venv" in ln)
@@ -445,3 +447,275 @@ class TestShippingDefaults:
         text = (PROJECT_ROOT / "src" / "lilith_core" / "run.py").read_text(encoding="utf-8")
         assert "не тем питоном" in text
         assert ".[dev,memory,voice]" in text
+
+class TestStage6UnityFace:
+    """Этап 6 (пивот): Unity-клиент, продюсер, персоны v2, эмулятор, тестовая VRM."""
+
+    UNITY = PROJECT_ROOT / "unity-client"
+
+    @pytest.mark.parametrize(
+        "relative",
+        [
+            "unity-client/Packages/manifest.json",
+            "unity-client/Assets/LilithFace/LilithFace.asmdef",
+            "unity-client/Assets/LilithFace/README.md",
+            "unity-client/Assets/LilithFace/SCENE.md",
+            "unity-client/Assets/LilithFace/SCENE.svg",
+            "unity-client/Assets/LilithFace/Scripts/LilithFaceClient.cs",
+            "unity-client/Assets/LilithFace/Scripts/LilithWSClient.cs",
+            "unity-client/Assets/LilithFace/Scripts/LilithClientConfig.cs",
+            "unity-client/Assets/LilithFace/Scripts/AudioQueueProcessor.cs",
+            "unity-client/Assets/LilithFace/Scripts/VisemeDriver.cs",
+            "unity-client/Assets/LilithFace/Scripts/EmotionDriver.cs",
+            "unity-client/Assets/LilithFace/Scripts/IdleController.cs",
+            "unity-client/Assets/LilithFace/Scripts/VrmLoader.cs",
+            "unity-client/Assets/LilithFace/Scripts/TransparentWindow.cs",
+            "unity-client/Assets/LilithFace/Scripts/FaceRig.cs",
+            "unity-client/Assets/LilithFace/Scripts/MiniJson.cs",
+            "scripts/unity_face_probe.py",
+            "scripts/make_test_vrm.py",
+            "scripts/make_bundle.py",
+            "scripts/verify_stage_artifact.py",
+            "docs/NEURONA_NOTES.md",
+            "docs/STAGE7_HANDS_SPEC.md",
+            "RELEASE_0.6.1.md",
+            "RELEASE_0.6.2.md",
+            ".editorconfig",
+        ],
+    )
+    def test_stage6_file_exists(self, relative: str) -> None:
+        assert (PROJECT_ROOT / relative).is_file(), f"не найден {relative}"
+
+    @pytest.mark.parametrize(
+        "relative",
+        [
+            "src/lilith_core/voice/pcm.py",
+            "src/lilith_core/face/ws_frames.py",
+            "src/lilith_core/face/producer.py",
+            "src/lilith_core/face/endpoints.py",
+            "src/lilith_core/face/lora.py",
+            "src/lilith_core/face/group.py",
+        ],
+    )
+    def test_stage6_module_exists(self, relative: str) -> None:
+        assert (PROJECT_ROOT / relative).is_file(), f"не найден {relative}"
+
+    def test_config_has_producer_and_lora_keys(self) -> None:
+        import yaml
+
+        data = yaml.safe_load((PROJECT_ROOT / "config" / "config.yaml").read_text(encoding="utf-8"))
+        face = data["face"]
+        assert face["producer_path"] == "/ws/face/producer"
+        assert face["producer_sample_rate"] == 24000
+        assert face["producer_chunk_bytes"] == 2048
+        assert face["lora_backend"] == "prompt-only"
+        assert face["group_max_participants"] == 4
+        # B1-б: VRM в панели остаётся, но выключен
+        assert face["web_vrm_enabled"] is False
+
+    def test_webui_keeps_vrm_behind_flag(self) -> None:
+        """B1-б: вендор и вьювер НЕ удалены, сцена включается флагом; добавлен селектор персон."""
+        html = (PACKAGE_DIR / "webui" / "index.html").read_text(encoding="utf-8")
+        assert "/ui/vrm_viewer.js" in html
+        assert (PACKAGE_DIR / "webui" / "vendor" / "three-vrm.module.js").is_file()
+        assert 'id="persona"' in html
+        assert "/api/face/personas" in html
+        assert "web_vrm_enabled" in html
+
+    def test_personas_have_stage6_documents(self) -> None:
+        """D1-б/D2/D3/D4: карточка, голос и лицо персоны — в yaml."""
+        lilith = PROJECT_ROOT / "personas" / "lilith"
+        for name in ("card.yaml", "voice.yaml", "face.yaml", "persona.md", "fallback.jpg"):
+            assert (lilith / name).is_file(), f"нет personas/lilith/{name}"
+        assert (PROJECT_ROOT / "personas" / "_template" / "card.yaml").is_file()
+
+    def test_unity_client_has_no_external_ws_dependency(self) -> None:
+        """ADR-016: транспорт на встроенном ClientWebSocket, без NativeWebSocket/Newtonsoft."""
+        scripts = PROJECT_ROOT / "unity-client" / "Assets" / "LilithFace" / "Scripts"
+        text = "\n".join(f.read_text(encoding="utf-8") for f in scripts.glob("*.cs"))
+        assert "System.Net.WebSockets" in text
+        # проверяем только using-директивы: упоминание в комментарии зависимостью не является
+        usings = {line.strip() for line in text.splitlines() if line.strip().startswith("using ")}
+        for banned in ("NativeWebSocket", "WebSocketSharp", "Newtonsoft", "websocket_sharp"):
+            assert not any(banned in u for u in usings), f"в unity-client появилась зависимость {banned}"
+
+    def test_unity_vrm_code_is_guarded(self) -> None:
+        """Весь код, трогающий UniVRM, обязан быть под #if LILITH_UNIVRM."""
+        rig = (PROJECT_ROOT / "unity-client" / "Assets" / "LilithFace" / "Scripts" / "FaceRig.cs")
+        text = rig.read_text(encoding="utf-8")
+        assert "#if LILITH_UNIVRM" in text and "#endif" in text
+
+        # вне блоков условной компиляции UniVRM-типы встречаться не должны
+        outside: list[str] = []
+        inside = 0
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#if LILITH_UNIVRM"):
+                inside += 1
+                continue
+            if inside and stripped.startswith("#if"):
+                inside += 1
+                continue
+            if inside and stripped.startswith("#endif"):
+                inside -= 1
+                continue
+            if not inside and not line.lstrip().startswith("//"):
+                outside.append(line)
+        assert "UniVRM10" not in "\n".join(outside), "UniVRM-API вне #if LILITH_UNIVRM"
+
+    def test_asmdef_defines_lilith_univrm_by_package(self) -> None:
+        import json
+
+        asmdef = json.loads(
+            (PROJECT_ROOT / "unity-client" / "Assets" / "LilithFace" / "LilithFace.asmdef").read_text(encoding="utf-8")
+        )
+        defines = {d["define"] for d in asmdef.get("versionDefines", [])}
+        names = {d["name"] for d in asmdef.get("versionDefines", [])}
+        assert "LILITH_UNIVRM" in defines
+        assert names & {"com.vrmc.vrm", "com.vrmc.univrm"}
+        # ссылок на VRM10 нет: иначе проект не соберётся до импорта UniVRM
+        assert asmdef.get("references") == []
+
+    def test_editorconfig_pins_csharp_style(self) -> None:
+        """F8: 4 пробела, Allman, file-scoped namespaces НЕ форсируем."""
+        text = (PROJECT_ROOT / ".editorconfig").read_text(encoding="utf-8")
+        assert "[*.cs]" in text
+        assert "csharp_new_line_before_open_brace = all" in text
+
+    def test_probe_is_dependency_free(self) -> None:
+        """F6-б: эмулятор работает на голом питоне (только stdlib)."""
+        text = (PROJECT_ROOT / "scripts" / "unity_face_probe.py").read_text(encoding="utf-8")
+        imports = {line.split()[1].split(".")[0] for line in text.splitlines() if line.startswith("import ")}
+        stdlib = {
+            "argparse", "base64", "hashlib", "json", "os", "socket", "struct", "sys",
+            "time", "pathlib", "typing", "collections", "dataclasses", "urllib",
+        }
+        assert imports <= stdlib, f"в probe появилась сторонняя зависимость: {imports - stdlib}"
+        assert "websockets" not in text and "import requests" not in text
+
+    def test_test_vrm_sample_exists(self) -> None:
+        """C5.3: процедурное тестовое тело лежит в репозитории."""
+        sample = PROJECT_ROOT / "tests" / "samples" / "test_cube.vrm"
+        assert sample.is_file()
+        assert sample.stat().st_size > 4096
+        assert sample.read_bytes()[:4] == b"glTF"
+
+    def test_readme_documents_stage6(self) -> None:
+        text = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+        assert "/ws/face/producer" in text
+        assert "unity-client" in text
+        assert "unity_face_probe" in text
+
+class TestDocsHygiene:
+    """Исторические числа тестов не должны перезаписываться (урок 18.09.2026).
+
+    ``scripts/sync_test_count.py`` когда-то правил все вхождения «N passed» во всех
+    доках и превратил «477 passed» этапа 1 в актуальное число. Теперь скрипт
+    точечный: эти тесты держат его в рамках.
+    """
+
+    #: Файлы уровня workspace (не проекта) в архив этапа не входят. У Кирюши рабочая
+    #: папка бывает **гибридной** (проект из архива распакован поверх старого workspace):
+    #: там `sync_test_count.py` может оказаться версии до 0.6.1, а `lilith/PLAN.md` —
+    #: отсутствовать. Поэтому вместо красного падения — skip (хотфикс 0.6.2).
+    SYNC_SCRIPT = WORKSPACE_ROOT / "scripts" / "sync_test_count.py"
+    PLAN_FILE = WORKSPACE_ROOT / "lilith" / "PLAN.md"
+
+    def test_sync_script_is_surgical(self) -> None:
+        if not self.SYNC_SCRIPT.is_file():
+            pytest.skip("скрипт уровня workspace: в архиве этапа его нет")
+        text = self.SYNC_SCRIPT.read_text(encoding="utf-8")
+        if "PLAN_MARKER" not in text and "ТЕСТЫ СЕЙЧАС" not in text:
+            pytest.skip("локальная копия sync_test_count.py старше 0.6.1 (гибридная папка)")
+        # CHANGELOG и исторические отчёты этапов скрипт трогать не должен
+        for banned in ('PROJECT / "CHANGELOG.md"', "STAGE1_REPORT", "STAGE2_REPORT", "STAGE5_REPORT"):
+            assert banned not in text, f"sync_test_count.py снова лезет в {banned}"
+
+    def test_plan_has_marker_line(self) -> None:
+        if not self.PLAN_FILE.is_file():
+            pytest.skip("lilith/PLAN.md — файл уровня workspace, в архиве этапа его нет")
+        plan = self.PLAN_FILE.read_text(encoding="utf-8")
+        assert "ТЕСТЫ СЕЙЧАС:" in plan
+
+    def test_changelog_keeps_stage_history(self) -> None:
+        """Числа прошлых этапов остались прежними (477 на этапах 1–5)."""
+        text = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        assert text.count("477 passed") >= 5
+        # текущее число — в заголовке секции этапа 6; базовая линия этапа 5 осталась 477
+        assert "### Тесты — 606 passed (+129 к 477)" in text
+        assert "первой правки: 477 passed" in text
+
+    def test_stage1_report_is_not_rewritten(self) -> None:
+        report = (PROJECT_ROOT / "STAGE1_REPORT.md").read_text(encoding="utf-8")
+        assert "477 passed" in report
+        assert "597 passed" not in report
+
+class TestStageArtifactTooling:
+    """Инструменты передачи артефакта: верификатор и текстовый бандл."""
+
+    def test_verify_artifact_script_exists(self) -> None:
+        assert (PROJECT_ROOT / "scripts" / "verify_stage_artifact.py").is_file()
+
+    def test_verify_artifact_passes_on_current_zip(self) -> None:
+        """Архив текущего этапа обязан проходить собственную проверку."""
+        import importlib.util
+        import sys as _sys
+
+        path = PROJECT_ROOT / "scripts" / "verify_stage_artifact.py"
+        spec = importlib.util.spec_from_file_location("verify_stage_artifact", path)
+        module = importlib.util.module_from_spec(spec)
+        _sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+
+        archive = PROJECT_ROOT / "artifacts" / "LILITH-CORE_stage6_v0.6.0.zip"
+        if not archive.is_file():
+            # В распакованном архиве самого архива нет (вложенные zip не пакуем),
+            # поэтому проверка имеет смысл только в рабочем дереве проекта.
+            pytest.skip("артефакт не найден: собери scripts/build_stage_archive.py --stage 6 --version 0.6.0")
+        assert module.verify(archive, stage=6, version="0.6.0", verbose=False) == 0
+
+    def test_archive_has_no_egg_info(self) -> None:
+        """editable-артефакты pip не должны попадать в поставку."""
+        import zipfile
+
+        archive = PROJECT_ROOT / "artifacts" / "LILITH-CORE_stage6_v0.6.0.zip"
+        if not archive.is_file():
+            pytest.skip("архив ещё не собран")
+        names = zipfile.ZipFile(archive).namelist()
+        assert not [n for n in names if ".egg-info" in n]
+        assert not [n for n in names if n.endswith("/.env")]
+
+    def test_bundle_script_exists_and_has_sets(self) -> None:
+        path = PROJECT_ROOT / "scripts" / "make_bundle.py"
+        assert path.is_file()
+        text = path.read_text(encoding="utf-8")
+        for name in ("unity", "server", "scripts", "tests", "docs"):
+            assert f'"{name}":' in text, f"в make_bundle.py нет набора {name}"
+
+    def test_bundle_roundtrip(self, tmp_path: Path) -> None:
+        """Собрать бандл unity-client и распаковать его обратно: sha256 должны совпасть."""
+        import base64
+        import hashlib
+        import importlib.util
+        import re as _re
+        import sys as _sys
+
+        path = PROJECT_ROOT / "scripts" / "make_bundle.py"
+        spec = importlib.util.spec_from_file_location("make_bundle", path)
+        module = importlib.util.module_from_spec(spec)
+        _sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+
+        out = tmp_path / "bundle.md"
+        module.build(out, "unity")
+        text = out.read_text(encoding="utf-8")
+        assert "## FILE: unity-client/Packages/manifest.json" in text
+
+        blocks = _re.findall(r"^## FILE: (.+?)\n<!-- bytes=(\d+) sha256=([0-9a-f]+) -->\n```b64\n(.*?)\n```", text, _re.S | _re.M)
+        assert blocks, "в бандле не нашлось ни одного base64-блока"
+        for name, size, digest, encoded in blocks:
+            blob = base64.b64decode(encoded.strip())
+            assert len(blob) == int(size), f"{name}: размер не совпал"
+            assert hashlib.sha256(blob).hexdigest() == digest, f"{name}: sha256 не совпал"
+            original = PROJECT_ROOT / name
+            assert original.read_bytes() == blob, f"{name}: содержимое отличается от оригинала"

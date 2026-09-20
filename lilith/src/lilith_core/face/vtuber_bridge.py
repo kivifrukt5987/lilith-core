@@ -1,5 +1,11 @@
 """Мост лица (этап 5): WebSocket-клиент к VTuber Studio с реконнектом.
 
+.. deprecated-annotation:: LEGACY (решение Q4, v0.6.2)
+   Внешний адаптер, не основной путь лица. Основной — Unity-продюсер
+   ``/ws/face/producer`` (этап 6). Держим под флагом
+   ``face.vtuber_studio_enabled`` / ``face.vmc_enabled`` (оба false в поставке),
+   в этапе 7 не развиваем.
+
 Протокол: VTuber Studio WebSocket API (JSON): рукопожатие ``AuthenticationRequest``
 → ``AuthenticationResponse``, далее эмоции шляются триггерами хоткеев
 (``HotkeyTriggerRequest``), идентификаторы хоткеев на каждую эмоцию лежат в конфиге

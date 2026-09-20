@@ -54,6 +54,7 @@ class MsgType(str, Enum):
     STATE = "state"        #: состояние сервера (этап 6: подтверждения инструментов)
     FACE = "face"          #: кадры лица: emotion / viseme / audio / done (этап 5 v2)
     VOICE = "voice"        #: запрос озвучки: клиент просит сказать текст (этап 5 v2)
+    PERSONA = "persona"    #: своп активной персоны: {"type":"persona","data":{"id":...}} (этап 6)
 
     @classmethod
     def values(cls) -> list[str]:

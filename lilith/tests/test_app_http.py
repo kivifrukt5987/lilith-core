@@ -88,8 +88,8 @@ class TestVersionEndpoint:
         payload = client.get("/api/version").json()
         assert payload["version"] == __version__
         assert payload["stage"] == __stage__
-        assert payload["stage_name"] == "face"
-        assert len(payload["roadmap"]) == 8
+        assert payload["stage_name"] == "face-unity"   # этап 6: пивот на Unity-клиент
+        assert len(payload["roadmap"]) == 10           # 9 этапов + запланированный 6.5
         assert payload["codename"] == "LILITH.EXE"
 
 

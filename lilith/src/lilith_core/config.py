@@ -358,7 +358,7 @@ class VoiceSettings(_Section):
 
 
 class FaceSettings(_Section):
-    """Слой «лицо»: VTuber Studio + VMC (этап 5)."""
+    """Слой «лицо»: продюсер для Unity, VTuber Studio + VMC, группы (этапы 5–6)."""
 
     vtuber_studio_enabled: bool = False
     vtuber_studio_url: str = "ws://localhost:8001"
@@ -374,6 +374,37 @@ class FaceSettings(_Section):
     hotkeys: dict[str, str] = Field(default_factory=dict)
     #: Догадываться по ключевым словам, если модель не поставила теги.
     keyword_fallback: bool = True
+
+    # --- этап 6: продюсер лица для внешних клиентов (Unity/OBS) ---------------- #
+    #: Путь WS-сокета продюсера (``/ws/unity`` — алиас, решение A6.1-б).
+    producer_path: str = "/ws/face/producer"
+    #: Путь WS-сокета групповых сцен (E3).
+    group_path: str = "/ws/group"
+    #: A1-а/A2: raw PCM int16 mono, 2048 байт на чанк, частота фиксируется здесь.
+    producer_sample_rate: int = Field(default=24000, ge=8000, le=192000)
+    producer_chunk_bytes: int = Field(default=2048, ge=256)
+    #: TTL эмоции по умолчанию; сброс делает Unity (A3.3).
+    emotion_ttl_ms: int = Field(default=4000, ge=0)
+    #: B1-б: VRM в веб-панели остаётся, но выключен — основной путь теперь Unity.
+    web_vrm_enabled: bool = False
+
+    # --- этап 6: LoRA-слот персон (D10-а: prompt-only) -------------------------- #
+    #: prompt-only | localai | lmstudio | llama-cpp (всё кроме первого — стабы).
+    lora_backend: str = "prompt-only"
+    #: Корень для относительных путей адаптеров из ``card.yaml: lora.path``.
+    lora_dir: str = ""
+    #: Глобальный множитель адаптера (перекрывает ``lora.scale`` персоны).
+    lora_scale: float = Field(default=1.0, ge=0.0, le=2.0)
+    #: Грузить адаптер автоматически при свопе персоны.
+    lora_autoload: bool = False
+    #: OpenAI-совместимый endpoint для HTTP-бэкендов LoRA (стабы).
+    lora_base_url: str = ""
+
+    # --- этап 6: групповые сцены (E1/E4) ---------------------------------------- #
+    #: Потолок участников групповой сцены.
+    group_max_participants: int = Field(default=4, ge=1, le=16)
+    #: Файл рассадки (слоты/позиции поверх ``face.yaml`` каждой персоны).
+    group_file: str = ""
 
     def resolved_token(self) -> str:
         """Токен VTuber Studio из переменной окружения."""

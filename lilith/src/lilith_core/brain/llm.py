@@ -194,6 +194,13 @@ class LLMClient:
             except Exception:  # noqa: BLE001 - сервер мог ответить не-JSON
                 models = []
             return {"ok": True, "error": None, "latency_ms": round(latency, 2), "models": models}
+        except httpx.ConnectTimeout as exc:
+            return {
+                "ok": False,
+                "error": f"не достучался за {timeout} c: {exc.__class__.__name__}",
+                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                "models": [],
+            }
         except httpx.TimeoutException as exc:
             return {
                 "ok": False,
@@ -255,6 +262,12 @@ class LLMClient:
                 if text and on_token is not None:
                     await on_token(text)
                 first_token_ms = (time.perf_counter() - started) * 1000
+        except httpx.ConnectTimeout as exc:
+            # Хотфикс 0.6.2 (приёмка на Windows/py3.13): подключение к закрытому порту
+            # на Windows уходит в таймаут соединения, а не в отказ. httpx.ConnectTimeout
+            # наследует и TimeoutException, и ConnectError, поэтому ловим его ПЕРЕД
+            # общим таймаутом: для пользователя это «сервер не поднят», а не «думает долго».
+            raise self._wrap_connection_error(profile, exc) from exc
         except httpx.TimeoutException as exc:
             raise BrainTimeoutError(
                 f"профиль '{profile.name}': сервер молчит дольше "

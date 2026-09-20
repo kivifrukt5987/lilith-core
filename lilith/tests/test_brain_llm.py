@@ -162,16 +162,36 @@ class TestErrors:
     """Сетевые смерти превращаются в человекопонятные ошибки."""
 
     async def test_connection_refused(self) -> None:
-        client = LLMClient(timeout=1.0)
+        """Отказ соединения → BrainConnectionError (детерминированно на любой ОС).
+
+        Хотфикс 0.6.2: раньше тест ходил в настоящий 127.0.0.1:1. На Linux это
+        мгновенный ``ECONNREFUSED``, а на Windows/py3.13 соединение уходит в
+        таймаут — тест краснел не из-за кода. Теперь отказ эмулируется транспортом,
+        а реальное поведение Windows покрыто ``test_connect_timeout_maps_to_connection_error``.
+        """
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused")
+
+        client = LLMClient(transport=httpx.MockTransport(handler))
         profile = make_profile(base_url="http://127.0.0.1:1/v1")
         with pytest.raises(BrainConnectionError) as exc:
             await client.complete(profile, MESSAGES)
         assert "профиль 'chat'" in str(exc.value)
         assert "127.0.0.1:1" in str(exc.value)
 
-    async def test_timeout(self) -> None:
+    async def test_connect_timeout_maps_to_connection_error(self) -> None:
+        """Регрессия 0.6.2: таймаут ПОДКЛЮЧЕНИЯ — это «сервер не поднят», не «думает долго»."""
         def handler(request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectTimeout("слишком долго")
+            raise httpx.ConnectTimeout("timed out")
+
+        client = LLMClient(transport=httpx.MockTransport(handler))
+        with pytest.raises(BrainConnectionError):
+            await client.complete(make_profile(base_url="http://127.0.0.1:1/v1"), MESSAGES)
+
+    async def test_timeout(self) -> None:
+        """Таймаут ОТВЕТА (сервер поднялся, но молчит) — BrainTimeoutError."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("слишком долго")
 
         client = LLMClient(transport=httpx.MockTransport(handler))
         with pytest.raises(BrainTimeoutError):

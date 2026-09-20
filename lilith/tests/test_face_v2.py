@@ -191,24 +191,33 @@ class TestVoiceFaceWs:
 
 
 class TestUnityAdapter:
-    """Зарезервированный /ws/unity: hello + зеркало face-кадров."""
+    """``/ws/unity`` — алиас продюсера (A6.1-б): кадр этапа 5 + hello этапа 6 + зеркало."""
 
     def test_hello_and_mirror(self, fv_client: TestClient) -> None:
         with fv_client.websocket_connect("/ws/unity") as unity:
             hello = unity.receive_json()
             assert hello["adapter"] == "unity-vrm-salsa"
             assert hello["status"] == "reserved"
+            assert hello["alias_of"] == "/ws/face/producer"
+
+            # вторым кадром приходит рукопожатие продюсера (этап 6)
+            producer_hello = unity.receive_json()
+            assert producer_hello["type"] == "hello"
+            assert producer_hello["producer"] == "lilith-face"
+            assert producer_hello["format"] == "pcm_s16le"
 
             with fv_client.websocket_connect("/ws") as panel:
                 panel.receive_json()
                 panel.receive_json()
                 panel.send_json({"type": "voice", "text": "Раз.", "data": {}})
-                # unity получает те же кадры из шины
-                seen = set()
-                while True:
+                # unity получает и кадры старой шины (type=face), и плоские кадры продюсера
+                legacy_kinds: set[str] = set()
+                producer_types: set[str] = set()
+                while "done" not in legacy_kinds or "done" not in producer_types:
                     frame = unity.receive_json()
-                    assert frame["type"] == "face"
-                    seen.add(frame["kind"])
-                    if frame["kind"] == "done":
-                        break
-            assert "audio" in seen and "viseme" in seen
+                    if frame["type"] == "face":
+                        legacy_kinds.add(frame["kind"])
+                    else:
+                        producer_types.add(frame["type"])
+            assert "audio" in legacy_kinds and "viseme" in legacy_kinds
+            assert "audio" in producer_types and "done" in producer_types

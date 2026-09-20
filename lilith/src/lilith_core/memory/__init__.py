@@ -119,18 +119,25 @@ class MemoryCore:
         session_id: str = "",
         source: str = "webui",
         profile: str | None = None,
+        persona_id: str = "",
     ) -> str | None:
         """Пишет ход диалога в журнал и RAG, затем дёргает саммаризатор.
 
         Возвращает текст саммари, если в этом ходе он был создан.
+
+        :param persona_id: активная персона хода (этап 6, D7-б). Пусто → ``agent_id``.
+            Полноценная персональная память (своя область на персону) — этап 6.5.
         """
+        scope = persona_id or agent_id
         user_id = await self.journal.add_message(
-            agent_id, "user", user_text, session_id=session_id, source=source, profile=profile
+            agent_id, "user", user_text, session_id=session_id, source=source, profile=profile,
+            persona_id=scope,
         )
         await self.journal.add_message(
-            agent_id, "assistant", reply_text, session_id=session_id, source=source, profile=profile
+            agent_id, "assistant", reply_text, session_id=session_id, source=source, profile=profile,
+            persona_id=scope,
         )
-        meta = {"session_id": session_id, "source": source, "profile": profile}
+        meta = {"session_id": session_id, "source": source, "profile": profile, "persona_id": scope}
         self.rag.add(agent_id, user_text, {**meta, "role": "user", "msg_id": user_id})
         self.rag.add(agent_id, reply_text, {**meta, "role": "assistant"})
         return await self.summarizer.maybe_summarize(agent_id)

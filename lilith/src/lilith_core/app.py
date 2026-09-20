@@ -36,11 +36,18 @@ from .memory import MemoryCore, apply_runtime_update, load_runtime_settings
 from .face import (
     FaceBus,
     FaceCore,
+    FaceProducerHub,
+    GroupManager,
+    Persona,
     PersonaRegistry,
+    build_lora_manager,
     extract_visemes,
     strip_emotion_tags,
 )
+from .face.endpoints import handle_group_ws, handle_legacy_unity_ws, handle_producer_ws
+from .face import ws_frames as face_frames
 from .voice import PackError, VoiceCore, read_wav
+from .voice.pcm import PcmChunker, resample_pcm16
 from pydantic import ValidationError
 from .config import Settings, config_source_info, get_settings, resolve_path
 from .echo import ReplyHandler, build_reply_handler
@@ -72,9 +79,10 @@ STAGE_NAMES: dict[int, str] = {
     3: "memory",
     4: "voice",
     5: "face",
-    6: "hands",
-    7: "bridges",
-    8: "stream",
+    6: "face-unity",   # пивот: лицо = Unity-клиент (three-vrm больше не основной путь)
+    7: "hands",
+    8: "bridges",
+    9: "stream",
 }
 
 
@@ -157,7 +165,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.voice = VoiceCore(settings) if settings.features.voice_enabled else None
     app.state.face = FaceCore(settings) if settings.features.face_enabled else None
     app.state.face_bus = FaceBus()
-    app.state.personas = PersonaRegistry(resolve_path(settings.app.personas_dir))
+    app.state.personas = PersonaRegistry(
+        resolve_path(settings.app.personas_dir), active=settings.app.agent_id
+    )
+    # Этап 6: продюсер лица для внешних клиентов (Unity/OBS) и групповые сцены.
+    app.state.face_lora = build_lora_manager(settings)
+    app.state.face_producer = FaceProducerHub(
+        registry=app.state.personas,
+        sample_rate=settings.face.producer_sample_rate,
+        chunk_bytes=settings.face.producer_chunk_bytes,
+        server_version=__version__,
+        lora=app.state.face_lora,
+    )
+    app.state.face_groups = GroupManager(
+        app.state.personas,
+        max_participants=settings.face.group_max_participants,
+        group_file=resolve_path(settings.face.group_file) if settings.face.group_file else "",
+    )
     app.state.chat_cycle = ChatCycle(
         settings, llm=app.state.llm_client, mock=app.state.mock_brain
     )
@@ -256,9 +280,11 @@ def _register_routes(app: FastAPI) -> None:
                 "3. memory (aiosqlite journal + chromadb RAG + summarizer)",
                 "4. voice (faster-whisper STT + silero VAD + silero/edge TTS)",
                 "5. face (emotion tags + VTuber Studio / VMC bridge)",
-                "6. hands (tools registry + human-in-the-loop confirm banner)",
-                "7. bridges (discord.py + vkbottle)",
-                "8. stream & service (twitchio, OBS scenes, docker-compose, autostart)",
+                "6. face-unity (Unity VRM client: /ws/face/producer, personas v2, LoRA slot, groups)",
+                "7. hands (tools registry + human-in-the-loop confirm banner)",
+                "8. bridges (discord.py + vkbottle)",
+                "9. stream & service (twitchio, OBS scenes, docker-compose, autostart)",
+                "6.5 personas memory (own scope per persona) - planned",
             ],
         }
 
@@ -449,7 +475,10 @@ def _register_routes(app: FastAPI) -> None:
                 status_code=503,
                 content={"status": "disabled", "detail": "включи features.face_enabled"},
             )
-        return face.describe()
+        payload = face.describe()
+        payload["web_vrm_enabled"] = app.state.settings.face.web_vrm_enabled
+        payload.update(app.state.face_producer.describe())
+        return payload
 
     @app.post("/api/face/emotion", tags=["face"])
     async def face_emotion(request: Request) -> Any:
@@ -465,65 +494,104 @@ def _register_routes(app: FastAPI) -> None:
         delivered = await face.bridge.set_emotion(name)
         return {"status": "ok", "delivered": delivered, "bridge": face.bridge.state()}
 
+    @app.get("/api/face/personas", tags=["face"])
+    async def face_personas(request: Request) -> dict[str, Any]:
+        """Реестр персон-агентов этапа 6 (D8): сводка без приватных полей карточки.
+
+        Поля ответа: ``id``, ``display_name``, ``vrm``, ``has_vrm``, ``voice{pack,speaker}``,
+        ``fallback``, ``active``, ``lora.state``, ``tools``, ``memory_scope``, ``greeting``, ``tags``.
+        """
+        registry: PersonaRegistry = app.state.personas
+        registry.reload()  # горячая подхватка новых персон
+        active = registry.active
+        return {
+            "active": active,
+            "default": app.state.settings.app.agent_id,
+            "personas": [
+                {**row, "active": row["id"] == active} for row in registry.describe()
+            ],
+            "lora": {"state": app.state.face_lora.state().mode, **app.state.face_lora.state().as_dict()},
+            "producer": app.state.face_producer.describe()["producer"],
+        }
+
     @app.get("/api/personas", tags=["face"])
     async def personas_list() -> dict[str, Any]:
-        """Реестр персон: души, тела и фолбэки (фундамент вкладок этапа 8)."""
+        """Алиас этапа 5 (D8): реестр персон в прежнем формате."""
         registry: PersonaRegistry = app.state.personas
         return {
             "default": app.state.settings.app.agent_id,
+            "active": registry.active,
             "personas": registry.list(),
         }
+
+    @app.get("/api/face/personas/{persona_id}/model.vrm", tags=["face"])
+    async def persona_vrm(persona_id: str) -> Any:
+        """Отдать VRM персоны (D5.4: модель может жить вне репозитория).
+
+        Путь берётся из ``face.yaml: vrm_path``; отдаём файл только если он
+        существует — иначе 404 с подсказкой, куда положить тело.
+        """
+        registry: PersonaRegistry = app.state.personas
+        registry.reload()  # путь к телу мог измениться в face.yaml
+        persona: Persona | None = registry.get(persona_id)
+        if persona is None:
+            return JSONResponse(status_code=404, content={"status": "error", "detail": f"нет персоны '{persona_id}'"})
+        source = persona.vrm_source()
+        if source is None or not source.is_file():
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "status": "missing_vrm",
+                    "detail": "модель не найдена: положи VRM по пути face.yaml:vrm_path",
+                    "expected": str(source) if source else None,
+                },
+            )
+        return FileResponse(source, media_type="model/gltf-binary", filename=f"{persona_id}.vrm")
+
+    @app.post("/api/face/personas/{persona_id}/activate", tags=["face"])
+    async def persona_activate(persona_id: str) -> Any:
+        """Глобальный своп персоны (D9) и рассылка кадра ``persona`` всем продюсерам."""
+        hub: FaceProducerHub = app.state.face_producer
+        frame = await hub.swap_persona(persona_id, reason="api")
+        if frame.get("type") == "error":
+            return JSONResponse(status_code=404, content={"status": "error", "detail": frame.get("detail")})
+        return {"status": "ok", "active": persona_id, "frame": frame}
+
+    @app.get("/api/face/groups", tags=["face"])
+    async def face_groups() -> dict[str, Any]:
+        """Групповые сцены (E1–E5): состав, рассадка, фокус."""
+        manager: GroupManager = app.state.face_groups
+        return {"groups": manager.describe(), "max_participants": app.state.settings.face.group_max_participants}
 
     @app.get("/api/state", tags=["service"])
     async def state() -> dict[str, Any]:
         """Состояние подключений (пригодится панели на этапе 6)."""
         return app.state.sessions.stats()
 
+    @app.websocket(app.state.settings.face.producer_path)
+    async def face_producer_ws(websocket: WebSocket) -> None:
+        """Продюсер лица для внешних клиентов (этап 6): Unity/OBS.
+
+        Плоские кадры ``hello``/``audio``/``viseme``/``emotion``/``persona``/
+        ``focus``/``stop``/``done``; клиент шлёт ``hello``/``ready``/
+        ``persona_request``/``speak``/``stats``/``ping``.
+        """
+        await handle_producer_ws(websocket, websocket.scope["app"])
+
+    @app.websocket(app.state.settings.face.group_path)
+    async def face_group_ws(websocket: WebSocket) -> None:
+        """Групповая сцена (E3): один сокет на группу, кадры с полем ``persona``."""
+        await handle_group_ws(websocket, websocket.scope["app"])
+
     @app.websocket("/ws/unity")
     async def unity_adapter(websocket: WebSocket) -> None:
-        """Зарезервированный адаптер Unity+VRM+SALSA (интерфейс этапа 5, реализация к 8).
+        """``/ws/unity`` — алиас продюсера лица (решение A6.1-б, этап 6).
 
-        Зеркалит face-кадры из шины и принимает команды эмоций/визем от внешней сцены.
+        Сохраняет поведение этапа 5 (первый кадр ``hello{adapter:"unity-vrm-salsa",
+        status:"reserved"}`` и зеркало ``face{kind:...}`` из :class:`FaceBus`),
+        а сверху даёт полный протокол ``/ws/face/producer``.
         """
-        app = websocket.scope["app"] if "app" in websocket.scope else None
-        await websocket.accept()
-        bus: FaceBus = app.state.face_bus
-        queue = bus.subscribe()
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "hello",
-                    "adapter": "unity-vrm-salsa",
-                    "status": "reserved",
-                    "note": "интерфейс зарезервирован этапом 5, реализация на этапе 8",
-                },
-                ensure_ascii=False,
-            )
-        )
-
-        async def pump() -> None:
-            while True:
-                frame = await queue.get()
-                await websocket.send_text(json.dumps({"type": "face", **frame}, ensure_ascii=False))
-
-        pump_task = asyncio.create_task(pump())
-        try:
-            while True:
-                raw = await websocket.receive_text()
-                parsed = parse_raw(raw)
-                if not parsed.ok or parsed.message is None:
-                    continue
-                if parsed.message.type is MsgType.FACE:
-                    kind = (parsed.message.data or {}).get("kind")
-                    if kind == "emotion":
-                        face_core: FaceCore | None = app.state.face
-                        if face_core is not None:
-                            await face_core.bridge.set_emotion(str(parsed.message.data.get("name") or ""))
-        except WebSocketDisconnect:
-            pass
-        finally:
-            pump_task.cancel()
-            bus.unsubscribe(queue)
+        await handle_legacy_unity_ws(websocket, websocket.scope["app"])
 
     @app.websocket(app.state.settings.server.ws_path)
     async def websocket_endpoint(websocket: WebSocket) -> None:
@@ -546,14 +614,34 @@ def _register_error_handlers(app: FastAPI) -> None:
 async def stream_voice_to_session(
     app: FastAPI, session: Session, text: str, voice_profile: str | None
 ) -> None:
-    """Озвучить текст: аудио-чанки + виземы кадрами FACE по сокету сессии и в шину."""
+    """Озвучить текст: аудио-чанки + виземы кадрами FACE по сокету сессии и в шину.
+
+    Этап 6: тот же поток **параллельно** уходит продюсеру лица (``/ws/face/producer``)
+    в виде плоских кадров raw PCM 24 kHz по 2048 байт. Оба потребителя получают
+    один ``utterance_id``, поэтому Unity может дропнуть реплику по кадру ``stop``.
+    """
     import base64
 
     voice_core = app.state.voice
     bus: FaceBus = app.state.face_bus
+    producer: FaceProducerHub = app.state.face_producer
+    persona_id = app.state.personas.active
+    settings: Settings = app.state.settings
+    utterance_id = f"u-{uuid.uuid4().hex[:8]}"
+    chunker = PcmChunker(
+        sample_rate=producer.sample_rate,
+        chunk_bytes=producer.chunk_bytes,
+        utterance_id=utterance_id,
+    )
     seq = 0
     async for chunk_wav in voice_core.stream(text, voice_profile):
         pcm, rate = read_wav(chunk_wav)
+        for producer_chunk in chunker.push(resample_pcm16(pcm, rate, producer.sample_rate)):
+            await producer.broadcast(
+                face_frames.audio_frame(
+                    producer_chunk, utterance_id=utterance_id, persona=persona_id
+                )
+            )
         audio_frame = {
             "kind": "audio",
             "audio_b64": base64.b64encode(chunk_wav).decode("ascii"),
@@ -573,9 +661,16 @@ async def stream_voice_to_session(
             await app.state.sessions.send(session, build_message(MsgType.FACE, data=dict(viseme_frame)))
             await bus.publish(viseme_frame)
         seq += 1
+    for producer_chunk in chunker.close():
+        await producer.broadcast(
+            face_frames.audio_frame(producer_chunk, utterance_id=utterance_id, persona=persona_id)
+        )
     done_frame = {"kind": "done", "seq": seq}
     await app.state.sessions.send(session, build_message(MsgType.FACE, data=dict(done_frame)))
     await bus.publish(done_frame)
+    await producer.broadcast(
+        face_frames.done_frame(utterance_id, chunks=chunker._seq, persona=persona_id)  # noqa: SLF001
+    )
 
 
 def build_chat_partial(chunk: str, stream_id: str, profile: str | None) -> Message:
@@ -630,6 +725,10 @@ async def handle_websocket(websocket: WebSocket, app: FastAPI) -> None:
                     "persona_name": settings.app.persona_name,
                     "agent_id": settings.app.agent_id,
                     "default_profile": settings.brain.default_profile,
+                    # Этап 6: панель должна знать, её ли VRM-сцена основной путь
+                    "web_vrm_enabled": settings.face.web_vrm_enabled,
+                    "producer_path": settings.face.producer_path,
+                    "active_persona": app.state.personas.active,
                 },
             ),
         )
@@ -766,12 +865,22 @@ async def dispatch(
             reply.text = clean
             reply.data["emotions"] = [event.name for event in events]
             bus: FaceBus = app.state.face_bus
+            producer: FaceProducerHub = app.state.face_producer
             for event in events:
                 frame = {"kind": "emotion", "name": event.name}
                 await sessions_ref.send(
                     session, build_message(MsgType.FACE, data=dict(frame))
                 )
                 await bus.publish(frame)
+                # Этап 6: тот же тег — плоским кадром внешним лицам (Unity/OBS).
+                await producer.broadcast(
+                    face_frames.emotion_frame(
+                        event.name,
+                        ttl_ms=settings.face.emotion_ttl_ms,
+                        utterance_id=stream_id,
+                        persona=producer.registry.active,
+                    )
+                )
             usage = reply.data.get("usage")
             if usage:
                 app.state.token_stats.record(
@@ -789,6 +898,7 @@ async def dispatch(
                     session_id=session.id,
                     source=str(context["source"]),
                     profile=reply.data.get("profile"),
+                    persona_id=app.state.personas.active,
                 )
                 if summary:
                     reply.data["memory_summary"] = summary  # панель/шина узнают после финала
@@ -812,6 +922,17 @@ async def dispatch(
             return error_message("пустой текст озвучки", code="empty_text")
         await stream_voice_to_session(app, session, text, message.data.get("profile"))
         return None
+
+    if msg_type is MsgType.PERSONA:
+        # D9: своп персоны из веб-панели (и любого клиента основной шины).
+        persona_id = str((message.data or {}).get("id") or message.text or "").strip()
+        if not persona_id:
+            return error_message("нужен id персоны (data.id)", code="missing_persona")
+        hub: FaceProducerHub = app.state.face_producer
+        frame = await hub.swap_persona(persona_id, reason="bus")
+        if frame.get("type") == "error":
+            return error_message(str(frame.get("detail")), code="unknown_persona")
+        return system_message(f"персона переключена: {persona_id}", persona=persona_id)
 
     if msg_type is MsgType.SYSTEM:
         logger.info("WS[{}]: system: {}", session.id, message.text)

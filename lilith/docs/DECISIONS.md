@@ -174,3 +174,199 @@ three.js/three-vrm вендорены в webui/vendor/ ради офлайн-п�
 
 **Последствия.** Критерии «моргает/курсор/улыбка/рот по слогам» проверяются у Кирюши
 глазами + face-debug оверлеем; серверная половина покрыта pytest.
+
+## ADR-015. Пивот лица: Unity-клиент вместо three-vrm (v0.6.0)
+
+**Контекст.** Спека архитектора «ПИВОТ этапа 5»: лицо = Unity-клиент (путь «Нейроны»
+от furrydev2007), three-vrm отменяется. Браузерная сцена не даёт прозрачного окна
+под OBS, грузит 3.5 МБ вендора и не умеет пружинные кости/полноценный VRM 1.0.
+
+**Решение.** Основной путь — Unity 6000.0 LTS + UniVRM 0.131.2 + Built-in RP,
+VRM 1.0. Сервер становится **продюсером**: `/ws/face/producer` отдаёт плоские кадры
+(A4-а) с raw PCM int16 mono 24 kHz по 2048 байт (A1-а, A2). Виземы считает клиент
+из PCM, серверная разметка — только по `want_server_visemes` (A3.1). Эмоцию гасит
+клиент по `ttl_ms` (A3.3). Прерывание — кадр `stop` (A3.4). `/ws/unity` сохранён
+алиасом (A6.1-б), основной `/ws` продолжает кормить панель (A6.2).
+
+**Последствия.** Веб-панель перестаёт быть «лицом», но остаётся диагностикой:
+`face.web_vrm_enabled: false` (B1-б) скрывает VRM-сцену, вендор и `vrm_viewer.js`
+не удаляются, debug-оверлей и fallback.jpg живут (B3/B4). `test_structure.py`
+переписан под флаг, а не удалён. Сборку Unity делает Кирюша — в песочнице Unity
+не поднять, поэтому критерий готовности доказывается pytest + `unity_face_probe.py`.
+
+## ADR-016. Ноль внешних зависимостей у Unity-клиента (v0.6.0)
+
+**Контекст.** Для WS в Unity обычно берут NativeWebSocket или websocket-sharp, для
+JSON — Newtonsoft (`com.unity.nuget.newtonsoft-json`). Каждый пакет = ещё одна
+версияная зависимость и ещё один способ сломать сборку Кирюше.
+
+**Решение.** Транспорт — встроенный `System.Net.WebSockets.ClientWebSocket`
+(есть в Unity 6 / Mono), JSON — свой `MiniJson` (~350 строк, словари/списки/скаляры),
+отладочный оверлей — `OnGUI` вместо uGUI. Всё, что трогает API UniVRM, закрыто
+`#if LILITH_UNIVRM`, а сам символ включается **сам** через `versionDefines` в
+`LilithFace.asmdef` по имени пакета `com.vrmc.vrm`.
+
+**Последствия.** Проект компилируется и проверяет соединение ДО установки UniVRM;
+`.asmdef` не ссылается на `VRM10` (иначе Unity ругался бы на отсутствующую сборку),
+поэтому `FaceRig` — единственное место с VRM-кодом. Единственная зависимость — UniVRM.
+
+## ADR-017. Тело персоны вне репозитория, тестовое — процедурное (v0.6.0)
+
+**Контекст.** Настоящая VRM весит десятки мегабайт; git такое таскать не должен
+(D5.4). Но без тела нельзя проверить своп персоны, виземы и моргание, а настоящее
+тело Кирюша печатает в VRoid Studio только на выходных (C5.1).
+
+**Решение.** Путь к модели берётся из `face.yaml: vrm_path` (абсолютный или
+относительно папки персоны), отдаётся через `GET /api/face/personas/<id>/model.vrm`.
+Для тестов `scripts/make_test_vrm.py` собирает **валидный VRM 1.0** на чистом
+stdlib: контейнер GLB + `VRMC_vrm`, 55 humanoid-костей в T-позе, два скиннутых
+меша, 11 морф-таргетов и все нужные экспрессии (`aa ih ou ee oh`, `happy angry sad
+relaxed surprised`, `blink`). Результат ~21 КБ — лежит в `tests/samples/test_cube.vrm`.
+
+**Последствия.** Пайплайн проверяется сразу, настоящее тело подключается одной
+строкой в yaml. Свой генератор сам себя валидирует (`validate()`), плюс pytest.
+Чужие модели в репозиторий не берём: лицензия Alicia Solid и прочих не позволяет.
+
+## ADR-018. Персональная память — в этапе 6 только интерфейс (v0.6.0)
+
+**Контекст.** D7 требует `memory: persona_id`: своя область памяти на персону.
+Но этап 3 уже живёт как один журнал + один RAG; полноценная переделка снесла бы
+полэтапа и все его тесты.
+
+**Решение.** В этапе 6 сделано минимально и необратимо: колонка `messages.persona_id`
+с идемпотентной миграцией `ALTER TABLE` (старые БД доводятся на старте, значения
+заполняются `agent_id`), `Journal.add_message(persona_id=…)`,
+`MemoryCore.remember_turn(persona_id=…)`, `persona_id` в метаданных RAG, и
+`memory_scope` в карточке персоны. chroma-коллекция с префиксом персоны и своя
+область поиска — **этап 6.5**.
+
+**Последствия.** Данные уже пишутся в разрезе персон: когда 6.5 включит раздельную
+выборку, история не потеряется. Ломающих изменений нет, все 477 старых тестов живы.
+
+## ADR-019. Групповая сцена: один сокет, мультиплексирование по `persona` (v0.6.0)
+
+**Контекст.** E1–E7: несколько персон в кадре, фокус-камера на говорящей. Вариант
+«по сокету на персону» умножил бы число соединений и рассинхронизировал порядок кадров.
+
+**Решение.** `/ws/group?group=main`: одно соединение, первым кадром `hello-group`
+с составом и рассадкой (`participants[{persona,slot,position}]`, `max_participants`,
+`focus`), дальше те же кадры продюсера, но с полем `persona`. Фокус задаёт сервер
+(E2-а) кадром `focus`. Рассадка — `group.yaml` поверх `face.yaml` (E4). Говорит
+только фокусная персона: «хор» запрещён, запрос от не-фокусной получает
+`error{code:"not_focused"}` (E5). Камера и OBS-сцены — Unity и этап 8 (E6).
+
+**Последствия.** В этапе 6 группа готова **сервером и контрактом**; Unity-сцена
+группы (несколько тел, слоты, фокус-камера) — следующий шаг, её можно собрать,
+не меняя ни строчки на сервере.
+
+## ADR-020. Что берём у «Нейроны» после покадрового разбора (v0.6.1)
+
+**Контекст.** 22.09.2026 Лилька-архитектор прислала «РАЗБОР НЕЙРОНЫ v2» — стек
+furrydev2007, разобранный по кадрам стримов: FastAPI `:8000` + WS `/api/ms/producer`
+с чанками 2048 Б, SALSA LipSync (4 виземы A/I/E+preview, триггеры 0.000/0.010/0.020/0.030,
+тайминги On 0.08 / Off 0.06 / Cubic Out, **очередь визем по позиции аудио-буфера**),
+Unity **6.1 (6000.1.9f1)** + OpenGL 4.5 + UniGLTF/VRM1, XTTS v2 с клоном от reference wav
+и нонвербаликой (смех/вздох/хмыканье/крик, теги в стиле Bark), облачный OpenAI +
+SummaryMemory, Postgres+Qdrant, NVIDIA Riva, и агентный слой на Claude Code + SpecKit
+с конституцией проекта и user stories Given/When/Then. Полный текст — `docs/NEURONA_NOTES.md`.
+
+**Решение.** Берём **приёмы, а не продукты**. Заведено четыре пункта:
+
+1. **Sample-accurate очередь визем по позиции в буфере — ОПЦИЕЙ в `AudioQueueProcessor`.**
+   У нас виземы применялись по такту `Update()`, у них — «`Queued 2 shapes at buffer pos N`»,
+   то есть привязаны к сэмплу. Их способ точнее на стыках чанков. Реализовано:
+   `AudioQueueProcessor.EnqueueVisemeAt/EnqueueViseme/DequeueDueVisemes` +
+   `PlayPositionSamples`/`EnqueuedSamples`, `VisemeDriver.ApplyQueued/TickFromQueue`,
+   флаг `LilithClientConfig.useSampleAccurateVisemes` (**дефолт выключен**),
+   `requestServerVisemes` в режиме sample-accurate складывает серверные кадры в очередь,
+   а при `useLocalVisemes` клиент анализирует чанк в момент приёма и знает точную позицию.
+   **`offset_ms` остаётся дефолтным путём** — как просила архитектор.
+
+2. **Fallback-маппинг японских имён блендшейпов.** У «Нейроны» SALSA смотрит на морфы
+   с именами «え», и многие VRoid-модели подписаны по-японски. Реализовано в `FaceRig`:
+   `VisemeAliases` принимает `あ/い/う/え/お` (и маленькие `ぁ…ぉ`) на входе;
+   `VisemeCustomFallback`/`EmotionCustomFallback` отдают японское имя как
+   `ExpressionKey.CreateCustom(...)`, если в модели нет пресета VRM 1.0. Чтобы фолбэк
+   не срабатывал вслепую, `FaceRig.CacheAvailableExpressions()` снимает список
+   реально существующих экспрессий при `Bind()` (`HasExpression`, `AvailableExpressions`).
+
+3. **Nonverbal-слот в `voice.yaml` — заведён, реализация отложена до этапа голоса.**
+   `PersonaVoice.nonverbal` (словарь `событие → {tag, weight, pack}`), виден в
+   `voice.as_dict()` и в кадре `persona`. В `personas/lilith/voice.yaml` слот объявлен
+   закомментированным примером (`laugh/sigh/hum/cry`). Синтез нонвербалики требует
+   XTTS/Bark-подобного бэкенда — это территория этапа голоса, не лица.
+
+4. **Sandbox-воркспейс + cleanup + сессионные пермишены — в спеку этапа 7 «Руки»**
+   по образцу US2/US3 «Нейроны». Спека написана: `docs/STAGE7_HANDS_SPEC.md`
+   (8 user stories Given/When/Then с приоритетами P1–P3, структура `hands/`,
+   матрица автотестов, 6 вопросов архитектору).
+
+**Принято дополнительно.**
+* **Given/When/Then** — формат приёмочных сценариев во всех следующих спеках этапов.
+* **`docs/DECISIONS.md` = конституция проекта**: поправка = письменный proposal +
+  review + инкремент версии (как `.specify/memory/constitution.md` у SpecKit).
+  Quality gates — в §US8 спеки этапа 7.
+
+**Не повторяем осознанно:** SALSA (платный ассет — у нас свой `VisemeDriver`),
+облачный OpenAI (мы локальные, ADR-001), Postgres+Qdrant (у нас sqlite+chroma),
+NVIDIA Riva (у нас faster-whisper + VAD), Claude Code/SpecKit как продукты
+(у нас свой поток: ARCHITECTURE + ADR + STAGE-отчёты).
+
+**Последствия.** Два расхождения с референсом остались **незакрытыми** и вынесены
+в `docs/NEURONA_NOTES.md` §6 как вопросы: частота плебека (у них 44.1 кГц с
+ресемплингом XTTS 24k на плебек, у нас 24 кГц без ресемплинга — Q1) и версия Unity
+(у них 6000.1.9f1 tech stream, у нас 6000.0.x LTS по решению C2 — Q2). Клиент не
+использует API, специфичные для Unity 6.1, поэтому соберётся на обеих ветках.
+
+## ADR-021. Ответы Q1–Q5 по «Нейроне» + приёмка 0.6.2 (v0.6.2)
+
+**Контекст.** Лилька-архитектор ответила на пять вопросов, которыми я закрыла
+`docs/NEURONA_NOTES.md` §6, и одновременно прислала локальную приёмку на
+Windows/Python 3.13.9: **601 passed, 3 failed, 2 skipped** с готовым лечением
+каждого красного. Плюс заранее решила главный вопрос спеки этапа 7.
+
+**Решения.**
+
+| # | Решение | Исполнение |
+|---|---|---|
+| **Q1** | **24 kHz нативно**, без ресемпла: `AudioClip` создаётся с `frequency 24000`, sample-accurate очередь считает сэмплы в частоте клипа. «Нейронины 44.1 — дефолт их плеера, не доктрина» | уже так: `face.producer_sample_rate: 24000`, `AudioQueueProcessor` держит `_sampleRate` из `hello`. Код не менялся |
+| **Q2** | **Unity 6000.0.x LTS** (у Кирюши 6000.0.84f1), за 6.1 tech stream не гонимся | зафиксировано в `unity-client/…/README.md`; ни одного API, специфичного для 6.1, в клиенте нет |
+| **Q3** | **Асимметричное сглаживание визем**: On 0.08 / Off 0.06 / Cubic Out — дефолт для локальных визем; серверная очередь под флагом остаётся sample-accurate | `LilithClientConfig.visemeOnSeconds/visemeOffSeconds/visemeCubicOut`, `VisemeDriver.OpenSeconds/CloseSeconds/CubicOut` + `Approach()`, `EvaluateCubicOut()` — static (тестируется без сцены). `visemeSmoothing` остался фолбэком при On/Off = 0 |
+| **Q4** | VMC/VTuber Studio — **опциональный внешний адаптер под флагом**, в этапе 7 не развивать, в доках помечать **legacy** | `vtuber_bridge.py` помечен `LEGACY` в докстринге, `ARCHITECTURE.md` §9.8 получил раздел «Legacy-адаптеры лица», оба флага в поставке `false` |
+| **Q5** | Окно **512×640 (портрет 4:5)**, borderless + topmost + dockBottomRight; размеры из `face.yaml: window.width/height`; приёмка — скриншот (F7) | `WindowSpec` в `PersonaFace` + `face.yaml` персоны и `_template`, доезжает в кадре `persona.face.window`; `LilithFaceClient.ApplyPersonaWindow()` → `TransparentWindow.ApplyWindowSize()` (реальный `SetWindowPos`); дефолт конфига 512×640 + флаг `usePersonaWindowSize` |
+| **Этап 7, Q1** | Sandbox — **ТОЛЬКО директорией** (dir + confine + cleanup), Docker опциональным бэкендом позже | внесено в `docs/STAGE7_HANDS_SPEC.md` §5 и US2 |
+
+**Приёмка 0.6.2 (три красных у Кирюши — все закрыты).**
+
+1. `test_brain_llm.py::TestErrors::test_connection_refused` — на Windows/py3.13
+   подключение к `127.0.0.1:1` **таймаутится**, а не отказывает, поэтому всплывал
+   `BrainTimeoutError` вместо `BrainConnectionError`. Взят её вариант «маппинг»:
+   `httpx.ConnectTimeout` (наследник и `TimeoutException`, и `ConnectError`) теперь
+   ловится **до** общего таймаута и уходит в `_wrap_connection_error()` — для
+   пользователя «не достучался» и «сервер долго думает» это разные беды. В
+   `healthcheck()` — та же ветка с текстом «не достучался за N c». Сам тест
+   переведён на `httpx.MockTransport(ConnectError)` — детерминированно на любой ОС;
+   добавлен `test_connect_timeout_maps_to_connection_error` (регрессия), а
+   `test_timeout` переведён на `ReadTimeout` (таймаут **ответа**, а не подключения).
+2. `test_structure.py::TestDocsHygiene::test_sync_script_is_surgical` — гвард:
+   skip, если файла уровня workspace нет **или** локальная копия старше 0.6.1
+   (в ней нет ни `PLAN_MARKER`, ни строки «ТЕСТЫ СЕЙЧАС»). Лечит гибридную папку
+   «workspace + распакованный бандл».
+3. `test_structure.py::TestDocsHygiene::test_plan_has_marker_line` — гвард: skip,
+   если `lilith/PLAN.md` отсутствует в корне (в архиве этапа его нет).
+
+**Косметика warnings (её же список).**
+* `SyntaxWarning: invalid escape sequence '\S'` в `tests/test_structure.py:322` —
+  строка с `.venv\Scripts\python.exe` стала **raw**.
+* Два `PytestWarning` про `@pytest.mark.asyncio` на синхронных
+  `test_face_bridge.py::TestOtherBridges::{test_vmc_reserve_unavailable, test_state_shape}`:
+  марк был не явный, его вешал `asyncio_mode = "auto"` на весь класс → синхронные
+  тесты вынесены в отдельный `TestSyncBridges`.
+* `StarletteDeprecationWarning` про httpx в `starlette.testclient` — отфильтрован
+  в `pyproject.toml` с комментарием: это обвязка starlette, httpx у нас осознанная
+  dev-зависимость.
+
+**Последствия.** Прогон в песочнице: **665 passed, 0 warnings**. Локальная приёмка
+Кирюши на Windows/py3.13.9 должна дать те же три красных → зелёные; два её skipped
+(самопроверка архива) — правильное поведение, архив локально не собирается.
+Версия `0.6.1 → 0.6.2`, этап 6, артефакт `LILITH-CORE_stage6_v0.6.2.zip`.
