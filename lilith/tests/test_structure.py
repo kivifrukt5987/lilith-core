@@ -476,10 +476,12 @@ class TestStage6UnityFace:
             "scripts/make_test_vrm.py",
             "scripts/make_bundle.py",
             "scripts/verify_stage_artifact.py",
+            "scripts/check_csharp_syntax.py",
             "docs/NEURONA_NOTES.md",
             "docs/STAGE7_HANDS_SPEC.md",
             "RELEASE_0.6.1.md",
             "RELEASE_0.6.2.md",
+            "RELEASE_0.6.3.md",
             ".editorconfig",
         ],
     )

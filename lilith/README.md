@@ -9,10 +9,10 @@ vLLM, Ollama, OpenRouter).
 
 | | |
 |---|---|
-| Версия | `0.6.2` (этап 6 + ADR-020/ADR-021: приёмы «Нейроны», ответы Q1–Q5, три красных приёмки закрыты) |
+| Версия | `0.6.3` (этап 6 + ADR-020…022: приёмы «Нейроны», Q1–Q5, приёмка Windows, два красных Unity-сборки закрыты) |
 | Этап | 6 из 9 (`face-unity`) — ждём сборки Unity у Кирюши и команду «дальше» для этапа 7 |
 | Python | 3.11+ |
-| Тесты | **665 passed** (pytest), 0 warnings |
+| Тесты | **691 passed, 2 skipped** (pytest), 0 warnings · с tree-sitter — 693 |
 | Unity | **6000.0.x LTS** (у Кирюши 6000.0.84f1) · Built-in RP · UniVRM 0.131.2 · VRM 1.0 |
 | Целевая машина | Windows 11, RTX 3060 12GB, i7-12700KF, 32GB RAM |
 
@@ -130,7 +130,7 @@ pytest -q
 Ожидаемый результат этапа 1:
 
 ```
-665 passed
+691 passed
 ```
 
 Покрытие: конфиг и приоритет источников, секреты не протекают в логи/healthz,
@@ -224,7 +224,7 @@ asyncio.run(main())
 ├── personas/
 │   ├── lilith/                # card.yaml · voice.yaml · face.yaml · persona.md · fallback.jpg
 │   └── _template/             # заготовка новой персоны (реестр её не считает)
-├── tests/                     # 665 тестов
+├── tests/                     # 691 тест
 ├── scripts/
 │   ├── ws_client.py           # ручная проверка шины из консоли (-i = диалог)
 │   ├── unity_face_probe.py    # ЭТАП 6: эмулятор Unity-клиента (проверка тракта без Unity)

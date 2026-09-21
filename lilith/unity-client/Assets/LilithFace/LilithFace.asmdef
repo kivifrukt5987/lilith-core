@@ -19,7 +19,32 @@
             "name": "com.vrmc.univrm",
             "expression": "",
             "define": "LILITH_UNIVRM"
+        },
+        {
+            "name": "com.vrmc.vrm10",
+            "expression": "",
+            "define": "LILITH_UNIVRM"
+        },
+        {
+            "name": "com.vrmc.gltf",
+            "expression": "",
+            "define": "LILITH_UNIVRM"
         }
     ],
-    "noEngineReferences": false
+    "noEngineReferences": false,
+    "_comment": [
+        "LILITH-CORE · unity-client (этап 6).",
+        "",
+        "versionDefines: символ LILITH_UNIVRM определяется САМ, когда в проекте появляется",
+        "любой из пакетов UniVRM — com.vrmc.vrm, com.vrmc.univrm, com.vrmc.vrm10, com.vrmc.gltf",
+        "(покрывает и установку unitypackage в Packages/, и embedded-вариант).",
+        "",
+        "references: ПУСТО намеренно — иначе проект не соберётся ДО импорта UniVRM.",
+        "После импорта можно (и у Кирюши уже) проставить ссылки вручную:",
+        "  UniGLTF, UniGLTF.Utils, UniHumanoid, VRM10  (+ VRM/MToon при необходимости).",
+        "При копировании только Scripts/ при переезде этот файл НЕ перезаписывается: ссылки живут у Кирюши.",
+        "",
+        "Если оверлей клиента пишет «LILITH_UNIVRM не определён» — добавь символ вручную:",
+        "  Edit → Project Settings → Player → Other Settings → Scripting Define Symbols."
+    ]
 }

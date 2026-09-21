@@ -3,7 +3,12 @@
 //
 // Решение D5.4: тело живёт ВНЕ репозитория, поэтому грузим либо с локального
 // диска (путь из face.yaml), либо по HTTP с сервера (/api/face/personas/<id>/model.vrm).
-// API UniVRM 0.131.x: Vrm10.LoadPathAsync / Vrm10.LoadBytesAsync → Vrm10Instance.
+// API UniVRM 0.131.2 (сверено по исходникам vrm-c/UniVRM, master):
+//   UniVRM10.Vrm10.LoadBytesAsync(byte[], bool canLoadVrm0X, ControlRigGenerationOption,
+//                                 bool showMeshes, IAwaitCaller awaitCaller, …) → Task<Vrm10Instance>
+//   UniGLTF.RuntimeOnlyAwaitCaller(float timeOutInSeconds = 1f/1000f) : UniGLTF.IAwaitCaller
+//       — сборка UniGLTF.Utils, только Play Mode (иначе NotSupportedException).
+//   UniGLTF.ImmediateCaller — для Edit Mode (не используется: загрузка у нас в рантайме).
 
 using System;
 using System.Collections;
@@ -13,6 +18,11 @@ using UnityEngine;
 using UnityEngine.Networking;
 
 #if LILITH_UNIVRM
+// Хотфикс 0.6.3 (CS0246): IAwaitCaller и RuntimeOnlyAwaitCaller объявлены в
+// неймспейсе UniGLTF, а физически лежат в сборке UniGLTF.Utils
+// (Packages/UniGLTF/Runtime/Utils/AwaitCaller/*.cs). Без этого using тип не находится,
+// хотя ссылка на сборку в .asmdef проставлена.
+using UniGLTF;
 using UniVRM10;
 #endif
 
@@ -53,6 +63,11 @@ namespace Lilith.Face
 
         [Tooltip("Таймаут скачивания, сек.")]
         public int downloadTimeoutSec = 60;
+
+        [Tooltip("Параметр UniGLTF.RuntimeOnlyAwaitCaller: через сколько секунд\n" +
+                 "загрузчик считает, что пора отдать кадр Unity (NextFrameIfTimedOut).\n" +
+                 "Дефолт UniVRM — 1 мс; больше = плавнее загрузка, меньше просадка fps.")]
+        public float awaitTimeoutSeconds = 0.001f;
 
         /// <summary>Текущая загруженная модель (или null).</summary>
         public GameObject Model { get; private set; }
@@ -168,22 +183,72 @@ namespace Lilith.Face
             }
 
 #if LILITH_UNIVRM
+            // Хотфикс 0.6.3 (CS4032): SwapRoutine — IEnumerator-корутина, а `await`
+            // в ней недопустим. Задачу заводим отдельно и ждём через `yield return task`:
+            // Unity умеет ждать Task внутри корутины, а исключения достаём из самой
+            // задачи (иначе они улетят в UnobservedTaskException и тело «молча» не загрузится).
             Vrm10Instance instance = null;
+            System.Threading.Tasks.Task<Vrm10Instance> loadTask = null;
             try
             {
-                instance = await Vrm10.LoadBytesAsync(
+                // RuntimeOnlyAwaitCaller поддерживает только Play Mode: вне игры его
+                // NextFrameTaskScheduler бросает NotSupportedException (проверено по
+                // исходникам UniVRM 0.131.2). Ловим это отдельной веткой — см. ниже.
+                loadTask = Vrm10.LoadBytesAsync(
                     bytes,
                     canLoadVrm0X: true,
                     controlRigGenerationOption: ControlRigGenerationOption.Generate,
                     showMeshes: true,
-                    awaitCaller: new RuntimeOnlyAwaitCaller());
+                    awaitCaller: new RuntimeOnlyAwaitCaller(awaitTimeoutSeconds));
+            }
+            catch (NotSupportedException notSupported)
+            {
+                Loading = false;
+                LastError = "загрузка VRM работает только в Play Mode (RuntimeOnlyAwaitCaller): " + notSupported.Message;
+                Debug.LogError("[Lilith] " + LastError);
+                Failed?.Invoke(personaId, VrmLoadResult.LoadFailed);
+                yield break;
             }
             catch (Exception ex)
             {
                 Loading = false;
                 LastError = ex.Message;
-                Debug.LogError($"[Lilith] VRM не загрузился: {ex}");
+                Debug.LogError($"[Lilith] VRM не запустился на загрузку: {ex}");
                 Failed?.Invoke(personaId, VrmLoadResult.LoadFailed);
+                yield break;
+            }
+
+            yield return loadTask;
+
+            if (loadTask.IsFaulted)
+            {
+                var cause = loadTask.Exception?.GetBaseException() ?? loadTask.Exception;
+                Loading = false;
+                LastError = cause?.Message ?? "неизвестная ошибка загрузки";
+                Debug.LogError($"[Lilith] VRM не загрузился: {cause}");
+                Failed?.Invoke(personaId, VrmLoadResult.LoadFailed);
+                yield break;
+            }
+
+            if (loadTask.IsCanceled)
+            {
+                Loading = false;
+                LastError = "загрузка VRM отменена";
+                Failed?.Invoke(personaId, VrmLoadResult.LoadFailed);
+                yield break;
+            }
+
+            instance = loadTask.Result;
+
+            if (generation != _generation)
+            {
+                // Пока тело грузилось, пришёл новый своп: этот результат уже не нужен.
+                if (instance != null)
+                {
+                    Destroy(instance.gameObject);
+                }
+
+                Loading = false;
                 yield break;
             }
 
@@ -286,6 +351,40 @@ namespace Lilith.Face
         private void OnDestroy()
         {
             DestroyModel();
+        }
+
+        /// <summary>
+        /// Сообщить подписчикам, что тело загружено и привязано.
+        ///
+        /// Хотфикс 0.6.3 (CS0067): normally событие дёргается из <c>#if LILITH_UNIVRM</c>-ветки,
+        /// и если символ не определён (или ветка не скомпилировалась), компилятор считает
+        /// событие неиспользуемым. Метод даёт легальную точку вызова из любого кода —
+        /// например, если тело поставили в сцену руками в Editor'е и его надо привязать
+        /// к <see cref="FaceRig"/> без загрузки файла.
+        /// </summary>
+        /// <param name="personaId">Чьё тело.</param>
+        /// <param name="model">GameObject с Vrm10Instance.</param>
+        public void NotifyLoaded(string personaId, GameObject model)
+        {
+            if (model == null)
+            {
+                return;
+            }
+
+            Model = model;
+            CurrentPersona = personaId ?? "";
+            Loaded?.Invoke(CurrentPersona, model);
+        }
+
+        /// <summary>То же для ошибки — чтобы подписчики узнали о провале из любого пути.</summary>
+        public void NotifyFailed(string personaId, VrmLoadResult result, string reason = "")
+        {
+            if (!string.IsNullOrEmpty(reason))
+            {
+                LastError = reason;
+            }
+
+            Failed?.Invoke(personaId, result);
         }
 
         /// <summary>Список доступных тел в каталоге персон (для отладочной панели).</summary>

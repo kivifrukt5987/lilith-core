@@ -78,11 +78,21 @@ unity-client/Packages/manifest.json →  <проект>/Packages/manifest.json
    * `UniVRM-0.131.2_a471.unitypackage`
 2. В Unity: **Assets → Import Package → Custom Package…** → сначала `VRM-…`,
    затем `UniVRM-…` → *Import* (все галочки).
-3. Дождаться компиляции. `LilithFace.asmdef` содержит `versionDefines` по имени
-   пакета `com.vrmc.vrm`, поэтому символ **`LILITH_UNIVRM` определится сам**.
+3. Дождаться компиляции. `LilithFace.asmdef` содержит `versionDefines` по именам
+   пакетов **`com.vrmc.vrm`, `com.vrmc.univrm`, `com.vrmc.vrm10`, `com.vrmc.gltf`** —
+   поэтому символ **`LILITH_UNIVRM` определится сам** и при установке unitypackage,
+   и при embedded-варианте (UniGLTF / VRM / VRM-1.0 в `Packages/`).
    Если оверлей пишет «LILITH_UNIVRM не определён» — добавь вручную:
    **Edit → Project Settings → Player → Other Settings → Scripting Define Symbols**
    → `LILITH_UNIVRM`.
+4. **Ссылки в `.asmdef`** (хотфикс 0.6.3). В репозитории `references` пустой —
+   намеренно, иначе проект не соберётся **до** импорта UniVRM. После импорта
+   проставь руками (Inspected → Assembly Definition References):
+   **`UniGLTF`, `UniGLTF.Utils`, `UniHumanoid`, `VRM10`** (+ `VRM`, `MToon`,
+   `MToon10.Runtime` при надобности). `UniGLTF.Utils` обязателен: там живут
+   `IAwaitCaller` и `RuntimeOnlyAwaitCaller`.
+   При переезде на новую версию копируется **только `Scripts/`** — твой `.asmdef`
+   со ссылками не затирается.
 
 ### 2.4. Тело персоны (VRM 1.0)
 * Кирюша печатает модель в **VRoid Studio** (C5.1) → экспорт **VRM 1.0**.

@@ -4,6 +4,75 @@
 
 ---
 
+## Хотфикс 0.6.3 (22.09.2026) — «два красных в Unity-сборке»
+
+Приёмка по F7 на реальной машине (Windows, Unity **6000.0.84f1**, UniVRM **0.131.2**,
+embedded-пакеты UniGLTF/VRM/VRM-1.0, ссылки в `.asmdef` проставлены вручную) дала две
+ошибки компиляции в `VrmLoader.cs`. Обе — агента, обе **невидимы из песочницы**: C# здесь
+не компилируется, а ветка `#if LILITH_UNIVRM` без символа не разбирается вовсе.
+Подробности и разбор причин — `RELEASE_0.6.3.md`, решение — **ADR-022**.
+Объём правки: **только `Scripts/`**, сцена и инспектор не тронуты.
+
+### Исправлено
+
+* **CS0246 `RuntimeOnlyAwaitCaller`** — тип объявлен в `namespace UniGLTF`
+  (сборка `UniGLTF.Utils`), а `using UniGLTF;` отсутствовал. Добавлен **внутри**
+  `#if LILITH_UNIVRM`; конструктор вызван с явным `awaitTimeoutSeconds` (новое поле
+  инспектора, дефолт UniVRM 1 мс). Там же в исходниках нашлось, что
+  `NextFrameTaskScheduler` вне Play Mode бросает `NotSupportedException` — добавлена
+  отдельная ветка с человеческим текстом вместо загадочного падения.
+* **CS4032 `await` в корутине** — `SwapRoutine` это `IEnumerator` (фаза скачивания на
+  `yield return UnityWebRequest`), поэтому `await` недопустим. Переведено на
+  «Task внутри корутины»: задача заводится отдельно, ждётся через `yield return loadTask`,
+  затем **явно** разбираются `IsFaulted` (с `Exception.GetBaseException()`) и `IsCanceled`.
+  Без этого ошибка загрузки тонет в `UnobservedTaskException`, а тело «молча» не
+  появляется (тот же класс багов, что лечился в 0.4.1). Добавлена **повторная проверка
+  `generation` после загрузки** — при двух быстрых свопах устаревшее тело уничтожается.
+* **CS0067 `Loaded is never used`** (жёлтый, «на усмотрение») — закрыт **по существу**,
+  не `#pragma`: добавлены легальные точки вызова вне условной компиляции
+  `NotifyLoaded(personaId, model)` и `NotifyFailed(personaId, result, reason)`
+  (заодно API для случая «тело поставили в сцену руками в Editor'е»).
+* **`.asmdef`**: `versionDefines` дополнен именами **`com.vrmc.vrm10`** и
+  **`com.vrmc.gltf`** (символ `LILITH_UNIVRM` теперь определится и при embedded-установке);
+  `references` в репозитории **пустые намеренно** — иначе проект не соберётся до импорта
+  UniVRM. Ручные ссылки Кирюши не затираются: при переезде копируется только `Scripts/`.
+
+### Добавлено
+
+* **`scripts/check_csharp_syntax.py`** — проверка C# **до** Unity: tree-sitter-c-sharp +
+  собственный селектор веток условной компиляции (грамматика не понимает `#else`),
+  проверка **обеих** веток (без символа и с `LILITH_UNIVRM`) + структурный поиск
+  `await` вне `async` (аналог CS4032). Контрольные выстрелы подтверждают, что чекер
+  не «всегда зелёный»: ловит пропущенную `;` и возвращённый `await`.
+  Типы и неймспейсы **не** проверяет — это работа компилятора, поэтому факты
+  закреплены тестами-стражами.
+* **`tests/samples/broken_await.cs`** — образец с намеренным CS4032 (лежит вне
+  `unity-client/`, Unity его не видит).
+
+### Тесты — 691 passed, 2 skipped (+28 к 665); с tree-sitter — 693 passed
+
+* `tests/test_hotfix_063.py` (26): `TestAwaitCallerNamespace` (5), `TestNoAwaitInCoroutine`
+  (6, включая «ни одного `await` в `VrmLoader.cs`» и «`async` только в `LilithWSClient.cs`»),
+  `TestEventHasLegalCallSite` (3), `TestAsmdefVersionDefines` (4), `TestBranchSelector` (6),
+  `TestCSharpSyntaxChecker` (2, скип без tree-sitter).
+* `tests/test_structure.py`: +2 обязательных файла.
+* Побочно найден и починен баг самого чекера: токенизатор склеивал `!X`, из-за чего
+  `#if !X` всегда вычислялось как ложь (пойман `test_negation_and_logic`).
+
+### Как проверить
+
+```bat
+:: синтаксис C# (окружение один раз: venv + tree-sitter tree-sitter-c-sharp)
+python scripts\check_csharp_syntax.py                     :: Файлов: 11, веток: 2, ошибок: 0
+run_tests.bat                                              :: ожидаем "691 passed, 2 skipped"
+```
+
+Кирюше: скопировать **только** `unity-client/Assets/LilithFace/Scripts/*.cs` в проект
+(сцену, инспектор и её `.asmdef` не трогаем) → дождаться компиляции → оба красных и
+жёлтый должны уйти.
+
+---
+
 ## Хотфикс 0.6.2 (22.09.2026) — «приёмка на Windows и ответы Q1–Q5»
 
 Кирюша прогнал v0.6.1 локально (Windows, Python 3.13.9, venv): **601 passed, 3 failed,
