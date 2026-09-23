@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from lilith_core.app import create_app
 from lilith_core.voice import write_wav
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -139,7 +144,35 @@ class TestPacksCli:
     def test_packs_list_cli_reads_manifest(self, capsys) -> None:
         from lilith_core.run import packs_main
 
+        # 0.6.4: манифест закоммичен (был в .gitignore через `models/`, из-за чего
+        # свежий клон не равнялся архиву этапа, а тест здесь скипался). Скип снят —
+        # теперь это обычный тест боевого файла.
         assert packs_main(["list"]) == 0
         out = capsys.readouterr().out
         assert "whisper-small" in out
+        assert "whisper-large-v3" in out
         assert "missing" in out
+
+    def test_manifest_is_tracked_and_unignored(self) -> None:
+        """Гвард «источника правды»: клон обязан быть равен архиву этапа.
+
+        ``build_stage_archive.py`` кладёт ``models/packs.yaml`` в zip
+        (``MODELS_KEEP``), а git его раньше не видел: в ``.gitignore`` стояло
+        ``models/`` — при исключённом родителе git не умеет возвращать отдельный
+        файл. Теперь там ``models/*`` + ``!models/packs.yaml``. Если кто-нибудь
+        вернёт старое правило или снесёт файл, красный будет здесь, а не у Кирюши
+        на машине.
+        """
+        manifest = PROJECT_ROOT / "models" / "packs.yaml"
+        assert manifest.is_file(), "models/packs.yaml пропал из репо — клон снова не равен архиву"
+
+        ignore = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
+        assert "!models/packs.yaml" in ignore, "негатив-правило пропало: файл перестанет коммититься"
+        assert "\nmodels/\n" not in ignore, "вернулось blanket-правило models/ — оно глушит негатив"
+
+        data = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+        assert set(data["packs"]) >= {"whisper-small", "whisper-large-v3"}
+        for name, row in data["packs"].items():
+            assert row["type"], f"{name}: без type установщик не знает, куда класть"
+            assert row["source"] in {"hf", "hf-mirror", "url", "local"}, f"{name}: неизвестный source"
+            assert row.get("target_dir"), f"{name}: без target_dir"

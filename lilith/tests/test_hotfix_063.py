@@ -83,15 +83,39 @@ class TestAwaitCallerNamespace:
 #  Красный №2 — CS4032: await в корутине
 # --------------------------------------------------------------------------- #
 class TestNoAwaitInCoroutine:
-    """``SwapRoutine`` остаётся корутиной: await только через ``yield return task``."""
+    """``SwapRoutine`` остаётся корутиной: ни одного ``await`` (CS4032).
+
+    .. note::
+        В 0.6.3 здесь жил гвард ``assert "yield return loadTask;" in text`` — он
+        держал **неверную** инвариантность: Unity 6000.0 не умеет ждать ``Task``
+        через ``yield return`` (Manual «Write and run coroutines»: из корутины
+        поддерживается ``Awaitable``, а generic ``Awaitable<T>`` — явно нет).
+        На приёмке F7 это дало дедлок редактора (``.Result`` у незавершённой задачи
+        блокирует главный поток, на котором же висит ``NextFrameTaskScheduler``).
+        С 0.6.5 гвард перевёрнут: ``yield return loadTask`` **запрещён**, а неблокирующее
+        ожидание проверяется в ``tests/test_hotfix_065.py``.
+    """
 
     def test_swap_routine_is_coroutine(self) -> None:
         text = VRM_LOADER.read_text(encoding="utf-8")
         assert re.search(r"private IEnumerator SwapRoutine\(", text)
 
-    def test_task_awaited_via_yield(self) -> None:
+    def test_task_is_not_yielded_directly(self) -> None:
+        """0.6.5: ``yield return task`` НЕ ждёт завершения — это и был дедлок F7.
+
+        Проверяем только строки кода: в комментариях конструкция обязана
+        упоминаться — там объяснено, почему её больше нет.
+        """
         text = VRM_LOADER.read_text(encoding="utf-8")
-        assert "yield return loadTask;" in text
+        offenders = [
+            line.strip()
+            for line in text.splitlines()
+            if "yield return loadTask" in line and not line.strip().startswith(("//", "*"))
+        ]
+        assert offenders == [], (
+            "вернулся yield return loadTask: Unity не ждёт Task в корутине, "
+            f"а .Result у незавершённой задачи вешает редактор намертво → {offenders}"
+        )
 
     def test_no_bare_await_in_vrm_loader(self) -> None:
         """Ни одного ``await`` в файле: загрузка идёт через Task + yield."""
@@ -113,7 +137,7 @@ class TestNoAwaitInCoroutine:
     def test_generation_recheck_after_load(self) -> None:
         """Пока тело грузилось, мог прийти новый своп — результат надо выбросить."""
         text = VRM_LOADER.read_text(encoding="utf-8")
-        after = text.split("yield return loadTask;", 1)[1]
+        after = text.split("instance = loadTask.Result;", 1)[1]
         assert "generation != _generation" in after
         assert "Destroy(instance.gameObject)" in after
 

@@ -64,6 +64,7 @@ namespace Lilith.Face
         private const uint WS_EX_TRANSPARENT = 0x00000020;
         private const uint WS_EX_TOPMOST = 0x00000008;
         private const uint WS_EX_TOOLWINDOW = 0x00000080;
+        private const uint WS_EX_APPWINDOW = 0x00040000;
 
         private const uint LWA_COLORKEY = 0x00000001;
         private const uint SWP_NOSIZE = 0x0001;
@@ -100,12 +101,19 @@ namespace Lilith.Face
         private static extern int DwmExtendFrameIntoClientArea(IntPtr hWnd, ref Margins margins);
 
         [StructLayout(LayoutKind.Sequential)]
+        /// <summary>
+        /// Win32 RECT. Хотфикс 0.6.6: поля в ЕДИНОМ нижнем регистре — раньше было
+        /// ``left / Top / Right / Bottom``, и в player-only ветке писали ``rect.left``,
+        /// чего у структуры нет. Это **CS1061**, который не виден ни в Editor, ни
+        /// синтаксическому чекеру (он типов не знает) — пойман только сборкой F7.
+        /// Гвард: ``tests/test_hotfix_066.py::TestRectRegister``.
+        /// </summary>
         private struct RECT
         {
             public int left;
-            public int Top;
-            public int Right;
-            public int Bottom;
+            public int top;
+            public int right;
+            public int bottom;
         }
 #endif
 
@@ -134,16 +142,55 @@ namespace Lilith.Face
 
             var mode = config != null ? config.transparency : TransparencyMode.Dwm;
 
+            // MSAA размывает альфу по краям — для прозрачного окна он вреден всегда
+            // (и это же лечит «кайму антиалиасинга» на цветовом ключе, пункт 6 донесения).
+            QualitySettings.antiAliasing = 0;
+            PrepareCamera(transparentCamera);
+
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-            _hwnd = GetActiveWindow();
+            if (_hwnd == IntPtr.Zero)
+            {
+                _hwnd = GetActiveWindow();
+            }
+
             if (_hwnd == IntPtr.Zero)
             {
                 Debug.LogWarning("[Lilith] не получил HWND окна — прозрачность не применена");
                 return;
             }
 
+            ApplyStyles(mode);
+            ApplyTransparency(mode);
+            Reposition(true);
+            _applied = true;
+            Debug.Log($"[Lilith] прозрачность окна: {mode} (hwnd={_hwnd.ToInt64()})"
+                      + $" · toolWindow={(config == null || config.windowToolWindow)}"
+                      + $" · frame={(config != null && config.showWindowFrame)}"
+                      + " · хоткей закрытия Ctrl+Alt+Q · F7 смена режима · F8 вкл/выкл · F9 в угол");
+            LogModeHints(mode);
+#else
+            _applied = true;
+            Debug.Log($"[Lilith] прозрачность окна ({mode}) применяется только в Windows-билде; " +
+                      "в Editor/Game View её не увидеть — собери Standalone.");
+#endif
+        }
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+        /// <summary>
+        /// Стили окна — единственное место, где мы их трогаем (0.6.6).
+        /// ``windowToolWindow``: ✅ — окна нет в Alt+Tab и таскбаре (рабочий инструмент);
+        /// ❌ — WS_EX_APPWINDOW, окно переключается как обычное приложение.
+        /// ``showWindowFrame``: ✅ — оставляем заголовок/рамку/крестик (прозрачность при этом не работает).
+        /// </summary>
+        private void ApplyStyles(TransparencyMode mode)
+        {
             var style = (uint)GetWindowLong(_hwnd, GWL_STYLE);
-            if (borderless)
+            var wantFrame = config != null && config.showWindowFrame;
+            if (wantFrame)
+            {
+                style |= WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+            }
+            else if (borderless)
             {
                 style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
             }
@@ -151,13 +198,17 @@ namespace Lilith.Face
             style |= WS_VISIBLE | WS_POPUP;
 
             var exStyle = (uint)GetWindowLong(_hwnd, GWL_EXSTYLE);
+            exStyle &= ~(WS_EX_TOOLWINDOW | WS_EX_APPWINDOW | WS_EX_LAYERED);
+            exStyle |= (config == null || config.windowToolWindow) ? WS_EX_TOOLWINDOW : WS_EX_APPWINDOW;
+
             if (topmost)
             {
                 exStyle |= WS_EX_TOPMOST;
             }
-
-            // Скрываем окно из Alt+Tab: оно рабочий инструмент, а не приложение.
-            exStyle |= WS_EX_TOOLWINDOW;
+            else
+            {
+                exStyle &= ~WS_EX_TOPMOST;
+            }
 
             if (mode == TransparencyMode.LayeredColorKey)
             {
@@ -166,34 +217,95 @@ namespace Lilith.Face
 
             SetWindowLong(_hwnd, GWL_STYLE, (int)style);
             SetWindowLong(_hwnd, GWL_EXSTYLE, (int)exStyle);
+        }
 
+        /// <summary>
+        /// Собственно прозрачность. Вызывается только при смене режима —
+        /// ``SetLayeredWindowAttributes``/``DwmExtendFrameIntoClientArea`` раз в кадр
+        /// дают рябь и «метание» окна (так выглядел эксперимент Кирюши с Color Key).
+        /// </summary>
+        private void ApplyTransparency(TransparencyMode mode)
+        {
             if (mode == TransparencyMode.Dwm)
             {
                 var margins = new Margins { cxLeftWidth = -1, cxRightWidth = -1, cyTopHeight = -1, cyBottomHeight = -1 };
-                DwmExtendFrameIntoClientArea(_hwnd, ref margins);
+                var hr = DwmExtendFrameIntoClientArea(_hwnd, ref margins);
+                Debug.Log($"[Lilith] DwmExtendFrameIntoClientArea: hr=0x{hr:X8} (0 = успех)");
             }
             else if (mode == TransparencyMode.LayeredColorKey)
             {
                 var key = config != null ? config.colorKey : new Color32(255, 0, 255, 255);
-                var crKey = (uint)(key.r | (key.g << 8) | (key.b << 16));
-                SetLayeredWindowAttributes(_hwnd, crKey, 0, LWA_COLORKEY);
+                var crKey = (uint)(key.r | ((uint)key.g << 8) | ((uint)key.b << 16));
+                var ok = SetLayeredWindowAttributes(_hwnd, crKey, 255, LWA_COLORKEY);
+                Debug.Log($"[Lilith] SetLayeredWindowAttributes: ключ #{key.r:X2}{key.g:X2}{key.b:X2} · ok={ok}");
             }
 
-            SetWindowLong(_hwnd, GWL_STYLE, (int)style);
-            SetWindowPos(
-                _hwnd,
-                topmost ? HWND_TOPMOST : 0,
-                0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            SetWindowPos(_hwnd, topmost ? HWND_TOPMOST : 0, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        }
 
-            DockBottomRight();
-            _applied = true;
-            Debug.Log($"[Lilith] прозрачность окна: {mode} (hwnd={_hwnd.ToInt64()})");
-#else
-            _applied = true;
-            Debug.Log($"[Lilith] прозрачность окна ({mode}) применяется только в Windows-билде; " +
-                      "в Editor/Game View её не увидеть — собери Standalone.");
+        /// <summary>
+        /// Позиция/размер окна. Вызывает ``SetWindowPos`` ТОЛЬКО если целевой прямоугольник
+        /// отличается от текущего — повторяющиеся вызовы и дрались за окно в Color Key.
+        /// </summary>
+        private void Reposition(bool force)
+        {
+            if (config == null)
+            {
+                return;
+            }
+
+            RECT rect;
+            GetWindowRect(_hwnd, out rect);
+            var screenW = GetSystemMetrics(SM_CXSCREEN);
+            var screenH = GetSystemMetrics(SM_CYSCREEN);
+            var width = Mathf.Max(64, (int)config.windowSize.x);
+            var height = Mathf.Max(64, (int)config.windowSize.y);
+            var x = config.dockBottomRight ? screenW - width - config.windowMargin : rect.left;
+            var y = config.dockBottomRight ? screenH - height - config.windowMargin : rect.top;
+
+            if (!force && rect.left == x && rect.top == y
+                && (rect.right - rect.left) == width && (rect.bottom - rect.top) == height)
+            {
+                return; // уже там — не дёргаем окно
+            }
+
+            SetWindowPos(_hwnd, topmost ? HWND_TOPMOST : 0, x, y, width, height, SWP_NOACTIVATE);
+        }
+
+        /// <summary>Подсказка в Player.log: что включить в Player Settings, если фон чёрный.</summary>
+        private void LogModeHints(TransparencyMode mode)
+        {
+            if (mode != TransparencyMode.Dwm)
+            {
+                return;
+            }
+
+            Debug.Log("[Lilith] DWM-стекло в Unity 6 работает только при двух настройках плеера: "
+                      + "Player Settings → Resolution and Presentation → Fullscreen Mode = Fullscreen Window; "
+                      + "Player Settings → Other Settings → Use Flip Model Swapchain = ❌ (без этого "
+                      + "flip-model swapchain отдаёт DWM непрозрачный кадр — отсюда чёрный фон на Win10 19045).");
+        }
 #endif
+
+        /// <summary>
+        /// 0.6.6: сменить режим прозрачности ЖИВЬЁМ (F7) — чтобы сравнивать режимы
+        /// в одном билде, а не пересобирать проект под каждый эксперимент.
+        /// </summary>
+        public void CycleMode()
+        {
+            var values = (TransparencyMode[])System.Enum.GetValues(typeof(TransparencyMode));
+            var current = config != null ? config.transparency : TransparencyMode.Dwm;
+            var index = System.Array.IndexOf(values, current);
+            var next = values[(index + 1) % values.Length];
+            if (config != null)
+            {
+                config.transparency = next;
+            }
+
+            _applied = false;
+            Debug.Log($"[Lilith] F7: режим прозрачности {current} → {next}");
+            Apply();
         }
 
         /// <summary>Снять прозрачность (для отладки в окне).</summary>
@@ -225,15 +337,7 @@ namespace Lilith.Face
                 return;
             }
 
-            RECT rect;
-            GetWindowRect(_hwnd, out rect);
-            var screenW = GetSystemMetrics(SM_CXSCREEN);
-            var screenH = GetSystemMetrics(SM_CYSCREEN);
-            var width = Mathf.Max(64, config.windowSize.x);
-            var height = Mathf.Max(64, config.windowSize.y);
-            var x = config.dockBottomRight ? screenW - width - config.windowMargin : rect.Left;
-            var y = config.dockBottomRight ? screenH - height - config.windowMargin : rect.Top;
-            SetWindowPos(_hwnd, topmost ? HWND_TOPMOST : 0, x, y, width, height, SWP_NOACTIVATE);
+            Reposition(false);
 #endif
         }
 
@@ -251,22 +355,7 @@ namespace Lilith.Face
                 return;
             }
 
-            var screenW = GetSystemMetrics(SM_CXSCREEN);
-            var screenH = GetSystemMetrics(SM_CYSCREEN);
-
-            RECT rect;
-            GetWindowRect(_hwnd, out rect);
-            var width = rect.Right - rect.Left;
-            var height = rect.Bottom - rect.Top;
-            if (width <= 0 || height <= 0)
-            {
-                width = config.windowSize.x;
-                height = config.windowSize.y;
-            }
-
-            var x = screenW - width - config.windowMargin;
-            var y = screenH - height - config.windowMargin;
-            SetWindowPos(_hwnd, topmost ? HWND_TOPMOST : 0, x, y, width, height, SWP_NOACTIVATE);
+            Reposition(true);
 #endif
         }
 
@@ -289,9 +378,16 @@ namespace Lilith.Face
                 var key = config.colorKey;
                 cam.backgroundColor = new Color(key.r / 255f, key.g / 255f, key.b / 255f, 1f);
             }
+            else if (mode == TransparencyMode.Off)
+            {
+                // 0.6.6: «Off» — прозрачности нет вовсе, поэтому альфа 0 дала бы чёрную
+                // дыру, и цикл F7 выглядел бы как поломка. Делаем фон честным: тёмный
+                // непрозрачный, окно видно и в нём понятно, что режим выключен.
+                cam.backgroundColor = new Color(0.08f, 0.06f, 0.10f, 1f);
+            }
             else
             {
-                // DWM/Off: полностью прозрачный фон (альфа 0)
+                // DWM: полностью прозрачный фон (альфа 0) — DWM покажет рабочий стол
                 cam.backgroundColor = new Color(0f, 0f, 0f, 0f);
             }
         }
@@ -314,6 +410,22 @@ namespace Lilith.Face
             if (Input.GetKeyDown(KeyCode.F9))
             {
                 DockBottomRight();
+            }
+
+            if (Input.GetKeyDown(KeyCode.F7))
+            {
+                CycleMode();
+            }
+
+            // Окно без рамок не имеет крестика и (в режиме tool window) не видно в Alt+Tab,
+            // поэтому закрывать его должен хоткей. По умолчанию Ctrl+Alt+Q.
+            if (config != null && config.closeHotkeyEnabled
+                && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))
+                && (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt))
+                && Input.GetKeyDown(config.closeHotkey))
+            {
+                Debug.Log($"[Lilith] хоткей закрытия (Ctrl+Alt+{config.closeHotkey}) — выходим");
+                Application.Quit();
             }
         }
     }

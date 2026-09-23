@@ -35,7 +35,10 @@ brain = ["openai>=1.30"]
 # Этап 3 — память
 memory = ["aiosqlite>=0.20", "chromadb>=0.5"]
 # Этап 4 — уши и горло
-voice = ["faster-whisper>=1.0", "pynput>=1.7", "edge-tts>=6.1", "torch>=2.2", "soundfile>=0.12", "numpy>=1.26"]
+# silero — официальный пакет Silero Team (PyPI `silero`, НЕ `silero-tts`: это чужая
+# обёртка 0.0.5). Тянет torch>=1.12, omegaconf>=2.1, numpy>=1.23. ВАЖНО: модели Silero
+# распространяются под CC BY-NC 4.0 — для домашнего проекта нормально, для коммерции нет.
+voice = ["faster-whisper>=1.0", "pynput>=1.7", "edge-tts>=6.1", "torch>=2.2", "soundfile>=0.12", "numpy>=1.26", "silero>=0.5"]
 # Этап 5 — лицо
 face = ["websockets>=12.0"]
 # Этап 6 — руки

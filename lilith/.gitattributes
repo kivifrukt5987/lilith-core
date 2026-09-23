@@ -1,0 +1,41 @@
+# LILITH-CORE · атрибуты git (хотфикс 0.6.4)
+#
+# Лежит В КОРНЕ ПРОЕКТА (lilith/), а не репозитория, намеренно: так файл
+# уезжает в архив этапа вместе с поставкой (build_stage_archive.py пакует
+# lilith/), и правила едут к Кирюше, а не остаются только в git.
+# Действует на всё поддерево lilith/ — а .bat лежат именно там.
+#
+# Зачем этот файл: «источник правды — git», а git по умолчанию нормализует
+# переводы строк в LF. На свежем клоне это дало два красных
+# test_structure.py::TestBatchFiles::test_crlf_line_endings — и, что хуже,
+# вернуло класс бага 0.1.1: cmd.exe на Windows кашлит на .bat с LF.
+# Поэтому переводы строк зафиксированы здесь, а не отданы на откуп core.autocrlf.
+
+# --- Windows-скрипты: только CRLF -----------------------------------------
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# --- исходники и доки: LF ---------------------------------------------------
+*.py   text eol=lf
+*.cs   text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.js   text eol=lf
+*.svg  text eol=lf
+*.toml text eol=lf
+*.asmdef text eol=lf
+
+# --- бинарщина: не трогать и не диффить как текст ---------------------------
+*.vrm  binary
+*.glb  binary
+*.jpg  binary
+*.jpeg binary
+*.png  binary
+*.wav  binary
+*.zip  binary
+*.whl  binary

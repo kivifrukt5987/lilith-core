@@ -160,6 +160,52 @@ def find_await_misuse(root: Any, source: bytes) -> list[str]:
     return problems
 
 
+def find_interpolation_misuse(root: Any, source: bytes) -> list[str]:
+    """Найти тернарник внутри интерполяции без скобок — аналог **CS8361**.
+
+    Полевая правка Кирюши на замере Г: `$"… {_client != null ? _client.OutgoingPending : -1} …"`
+    не компилируется — C# требует скобок вокруг условного выражения в интерполяции.
+    Парсер такое **синтаксически** принимает (узел `interpolation` → `conditional_expression`),
+    поэтому ошибка невидима ни чекеру синтаксиса, ни мне в песочнице. Ловим структурно:
+    если у узла `interpolation` прямой потомок `conditional_expression` (а не
+    `parenthesized_expression`) — это красный CS8361 в Unity.
+    """
+    problems: list[str] = []
+
+    def walk(node: Any) -> None:
+        if node.type == "interpolation":
+            for child in node.children:
+                if child.type == "conditional_expression":
+                    snippet = " ".join(
+                        source[child.start_byte : child.end_byte].decode("utf-8", "replace").split()
+                    )[:60]
+                    problems.append(
+                        f"{child.start_point[0] + 1}:{child.start_point[1] + 1} "
+                        f"CS8361-подобное: тернарник в интерполяции без скобок → «{snippet}»"
+                    )
+        for child in node.children:
+            walk(child)
+
+    walk(root)
+    return problems
+
+
+def build_parser() -> Any:
+    """Собрать парсер C# (учтён и новый, и старый API tree-sitter).
+
+    Вынесено из ``main()`` в 0.6.6, чтобы тесты могли прогнать правило CS8361
+    по отдельным файлам и по обеим веткам ``#if`` без запуска CLI.
+    """
+    import tree_sitter
+    import tree_sitter_c_sharp
+
+    if hasattr(tree_sitter, "Language"):
+        return tree_sitter.Parser(tree_sitter.Language(tree_sitter_c_sharp.language()))
+    parser = tree_sitter.Parser()  # pragma: no cover - старый API tree-sitter
+    parser.set_language(tree_sitter_c_sharp.language())  # pragma: no cover
+    return parser  # pragma: no cover
+
+
 def check_file(path: Path, parser: Any, defined: set[str] | None = None) -> list[str]:
     """Распарсить файл (с учётом условной компиляции); вернуть список ошибок."""
     text = path.read_text(encoding="utf-8")
@@ -178,6 +224,8 @@ def check_file(path: Path, parser: Any, defined: set[str] | None = None) -> list
     if not problems:
         # структурные проверки имеют смысл только на неповреждённом дереве
         for problem in find_await_misuse(tree.root_node, source):
+            problems.append(f"{path.name}:{problem}")
+        for problem in find_interpolation_misuse(tree.root_node, source):
             problems.append(f"{path.name}:{problem}")
     return problems
 
@@ -207,11 +255,7 @@ def main() -> int:
         print(f"в {root} нет ни одного .cs")
         return 2
 
-    if hasattr(tree_sitter, "Language"):
-        parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_c_sharp.language()))
-    else:  # pragma: no cover - старый API tree-sitter
-        parser = tree_sitter.Parser()
-        parser.set_language(tree_sitter_c_sharp.language())
+    parser = build_parser()
 
     if args.define is None:
         # Обе ветки: до импорта UniVRM (символ не определён) и после.
@@ -234,7 +278,7 @@ def main() -> int:
             total += len(problems)
 
     print(f"\nФайлов: {len(files)}, веток: {len(variants)}, ошибок: {total}")
-    print("Проверено: синтаксис + `await` вне async-метода (CS4032).")
+    print("Проверено: синтаксис + `await` вне async-метода (CS4032) + тернарник в интерполяции (CS8361).")
     print("NB: типы, имена и неймспейсы парсер НЕ проверяет — это делает компилятор Unity.")
     return 1 if total else 0
 

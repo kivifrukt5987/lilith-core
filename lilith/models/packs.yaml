@@ -1,0 +1,48 @@
+# ============================================================================
+#  Манифест паков моделей LILITH-CORE
+#  пак = именованный комплект весов: источник, размер, sha256, куда класть.
+#  Управление:  lilith-core packs list | install <имя> | remove <имя>
+#               (секция "Паки" в панели приедет на этапе 6)
+#  source: hf | hf-mirror | url | local
+#  sha256: null = не проверять (предупреждение); size: 0 = не сверять размер
+#  СВОЙ пак = просто новая запись ниже (local-путь или url), код не трогается.
+# ============================================================================
+# NB (0.6.6): TTS Silero сюда НЕ кладём. Пак — это файл весов со стабильным URL и
+# sha256; Silero ставится пакетом PyPI `silero` (extras `[voice]`) и тянет веса через
+# torch.hub, стабильного URL файла нет. Выдумывать ref/sha256 не буду (урок D5.4).
+#   silero-tts:      → pip install lilith-core[voice]   # PyPI `silero` >= 0.5
+#   лицензия:        → CC BY-NC 4.0 (модели Silero) — некоммерческое использование
+#   до установки:    → голосовой путь отдаёт mock-чанк («прык»), это норма (ADR-022)
+packs:
+  whisper-small:
+    type: stt
+    source: hf
+    ref: Systran/faster-whisper-small/resolve/main/model.bin
+    target_dir: models/stt/whisper-small
+    size: 0
+    sha256: null
+    note: "faster-whisper small (~460 МБ) — уши по умолчанию"
+
+  whisper-large-v3:
+    type: stt
+    source: hf
+    ref: Systran/faster-whisper-large-v3/resolve/main/model.bin
+    target_dir: models/stt/whisper-large-v3
+    size: 0
+    sha256: null
+    note: "faster-whisper large-v3 (~3 ГБ) — максимум качества, CPU/GPU"
+
+  # --- шаблоны (раскомментируй и поправь под свою модель) --------------------
+  # vision-mmproj-qwen35-vl:
+  #   type: mmproj
+  #   source: hf
+  #   ref: <репо>/resolve/main/mmproj-<модель>-f16.gguf
+  #   target_dir: models/vision
+  #   note: "проектор зрения: пара к GGUF модели, без него глаза не работают"
+  #
+  # my-clone-voice:
+  #   type: voice-clone
+  #   source: local
+  #   ref: voices/lilith-clone/reference.wav
+  #   target_dir: voices/lilith-clone
+  #   note: "zero-shot референс: 3-10 сек чистой речи"

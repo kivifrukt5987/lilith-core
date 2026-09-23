@@ -111,6 +111,24 @@ namespace Lilith.Face
         [Tooltip("Следить взглядом за курсором мыши (полезно для стрима).")]
         public bool lookAtCursor = true;
 
+        [Header("Тело персоны (0.6.4)")]
+        [Tooltip("Грузить тело активной персоны сразу после рукопожатия.\n" +
+                 "Хотфикс 0.6.4: сервер шлёт кадр persona только в ответ на persona_request\n" +
+                 "или POST /api/face/personas/<id>/activate — сам по себе он не приходит.\n" +
+                 "Выключи, если тело ставишь в сцену руками.")]
+        public bool autoLoadBody = true;
+
+        [Tooltip("Попросить у сервера кадр persona при подключении (persona_request).\n" +
+                 "В кадре приезжают vrm, face.window, idle и voice персоны — поэтому\n" +
+                 "просить полезнее, чем строить URL самому. Отключи, если не хочешь\n" +
+                 "серверный своп на каждый reconnect.")]
+        public bool requestPersonaOnConnect = true;
+
+        [Tooltip("Сколько секунд ждать кадр persona после hello. Не дождались —\n" +
+                 "watchdog грузит тело по URL, который клиент построил сам:\n" +
+                 "{ServerBaseUrl}/api/face/personas/{id}/model.vrm")]
+        public float personaFrameTimeoutSec = 2f;
+
         [Header("Окно (C4-г)")]
         [Tooltip("Режим прозрачности: DWM по умолчанию, LayeredColorKey — фолбэк, Off — для OBS Color Key.")]
         public TransparencyMode transparency = TransparencyMode.Dwm;
@@ -128,6 +146,23 @@ namespace Lilith.Face
 
         [Tooltip("Позиция окна: справа снизу на рабочем столе (требование архитектора).")]
         public bool dockBottomRight = true;
+
+        [Tooltip("0.6.6: окно — «инструмент»: его нет в Alt+Tab и в панели задач.\n"
+                 + "Сними, если нужно переключаться на Лилит как на обычное приложение:\n"
+                 + "тогда добавится WS_EX_APPWINDOW — окно появится в Alt+Tab и таскбаре.")]
+        public bool windowToolWindow = true;
+
+        [Tooltip("0.6.6: оставить системную рамку окна (заголовок, крестик, resizable).\n"
+                 + "Полезно, если окно нечем закрыть; для OBS-оверлея держать выключенным:\n"
+                 + "рамка ломает прозрачность. Основной способ закрытия — Ctrl+Alt+Q.")]
+        public bool showWindowFrame = false;
+
+        [Tooltip("0.6.6: закрывать приложение хоткеем (по умолчанию Ctrl+Alt+Q).\n"
+                 + "Нужен, потому что окно без рамок не имеет крестика и не видно в Alt+Tab.")]
+        public bool closeHotkeyEnabled = true;
+
+        [Tooltip("0.6.6: клавиша закрытия — срабатывает вместе с Ctrl+Alt.")]
+        public KeyCode closeHotkey = KeyCode.Q;
 
         [Tooltip("Отступ от краёв экрана, px.")]
         public int windowMargin = 24;

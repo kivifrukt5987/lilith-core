@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import socket
 import sys
 import threading
@@ -122,6 +123,13 @@ def live_server(settings, tmp_project, tmp_path):
     (personas_dir / "lilith" / "fallback.jpg").write_bytes(b"\xff\xd8\xff\xd9")
     (personas_dir / "nova").mkdir()
     (personas_dir / "nova" / "persona.md").write_text("душа новы", encoding="utf-8")
+    # Хотфикс 0.6.4: у активной персоны есть тело — иначе новая дефолтная проверка
+    # пробы «тело доезжает» (persona_request → GET model.vrm → magic glTF) не имеет
+    # смысла. Берём процедурный тест-куб (ADR-017), а не настоящую модель (D5.4).
+    shutil.copyfile(
+        PROJECT_ROOT / "tests" / "samples" / "test_cube.vrm",
+        personas_dir / "lilith" / "model.vrm",
+    )
 
     settings.features.face_enabled = True
     settings.features.voice_enabled = True

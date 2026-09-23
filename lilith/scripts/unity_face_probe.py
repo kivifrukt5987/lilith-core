@@ -10,6 +10,9 @@
  распаковывается, ``seq`` растёт без дыр, ``offset_ms`` монотонен, последний ``final``;
 * серверные виземы (если попросить ``--want-server-visemes``);
 * эмоции, ``done``, ``stop``;
+* **тело доезжает** (хотфикс 0.6.4, проверка по умолчанию): ``persona_request`` →
+  кадр ``persona`` с ``vrm`` → HTTP GET ``/api/face/personas/<id>/model.vrm`` по URL,
+  который клиент строит сам, → 200 и magic ``glTF``. Отключается ``--skip-body-check``;
 * своп персоны (``--persona``);
 * групповая сцена (``--group``).
 
@@ -38,6 +41,8 @@ import socket
 import struct
 import sys
 import time
+import urllib.error
+import urllib.request
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -223,6 +228,8 @@ class Report:
     final_frame: dict[str, Any] = field(default_factory=dict)
     stop_frames: int = 0
     focus_frames: list[str] = field(default_factory=list)
+    #: Хотфикс 0.6.4: сводка проверки «тело доезжает» (URL, статус, байты, magic).
+    body: dict[str, Any] = field(default_factory=dict)
 
     def check(self, ok: bool, message: str) -> None:
         """Записать результат проверки."""
@@ -259,9 +266,110 @@ class Report:
             "personas": self.persona_frames,
             "focus": self.focus_frames,
             "stop_frames": self.stop_frames,
+            "body": self.body,
             "errors": self.errors,
             "checks": [{"ok": ok, "check": message} for ok, message in self.checks],
         }
+
+
+def http_base_from_ws(ws_url: str) -> str:
+    """HTTP-база из WS-адреса — та же формула, что в ``LilithFaceClient.HttpBaseUrlFrom``."""
+    url = ws_url.split("?")[0].replace("wss://", "https://").replace("ws://", "http://")
+    index = url.find("/ws")
+    return url[:index] if index > 0 else url
+
+
+def model_url_for(base_url: str, persona_id: str) -> str:
+    """URL тела персоны.
+
+    **Хотфикс 0.6.4:** формула обязана совпадать с ``VrmLoader.BuildModelUrl``
+    (C#) — именно её клиент использует, когда сервер не прислал ``vrm`` в кадре
+    ``persona``. Гвард на совпадение живёт в ``tests/test_hotfix_064.py``.
+    """
+    return f"{base_url.rstrip('/')}/api/face/personas/{persona_id}/model.vrm"
+
+
+def fetch_body(url: str, *, timeout: float = 15.0) -> dict[str, Any]:
+    """Скачать тело по HTTP (stdlib, без зависимостей) и описать результат."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - локальный сервер
+            payload = response.read()
+            return {
+                "url": url,
+                "status": int(response.status),
+                "content_type": response.headers.get("content-type") or "",
+                "bytes": len(payload),
+                "magic": payload[:4].decode("ascii", "replace"),
+                "error": "",
+            }
+    except urllib.error.HTTPError as exc:
+        body = exc.read()[:400].decode("utf-8", "replace")
+        return {"url": url, "status": exc.code, "content_type": "", "bytes": 0, "magic": "", "error": body}
+    except Exception as exc:  # noqa: BLE001 - diagnosтика важнее типа ошибки
+        return {"url": url, "status": 0, "content_type": "", "bytes": 0, "magic": "", "error": repr(exc)}
+
+
+def check_body_reaches_scene(
+    ws: MiniWebSocket,
+    report: Report,
+    *,
+    ws_url: str,
+    persona_id: str,
+    timeout: float = 8.0,
+    verbose: bool = False,
+) -> None:
+    """**Хотфикс 0.6.4.** Регрессия блокера F7: «тело не доезжает до сцены».
+
+    Проверяет весь путь, которым пойдёт Unity-клиент:
+
+    1. ``persona_request`` → сервер обязан ответить кадром ``persona`` с ``swap:true``;
+    2. в кадре есть ``vrm`` (иначе у персоны нет тела на диске — 404 ждёт и клиента);
+    3. URL, который клиент **строит сам**, совпадает с ``vrm`` из кадра;
+    4. HTTP GET этого URL отдаёт 200 и настоящий GLB (magic ``glTF``).
+
+    Пункты 3–4 — ровно то, чего не хватало в 0.6.3: probe никогда не проверял
+    путь «подключился → тело», поэтому блокер и дожил до приёмки на Windows.
+    """
+    base = http_base_from_ws(ws_url)
+    built_url = model_url_for(base, persona_id)
+    report.body = {"persona": persona_id, "built_url": built_url}
+
+    ws.send_json({"type": "persona_request", "id": persona_id})
+    frame: dict[str, Any] | None = None
+    for candidate in read_frames(ws, report, stop_when=lambda f: f.get("type") in {"persona", "error"}, timeout=timeout):
+        report.frames[candidate.get("type", "?")] += 1
+        if verbose:
+            print(f"  ← {candidate.get('type')}: {json.dumps(candidate, ensure_ascii=False)[:200]}")
+        if candidate.get("type") == "persona":
+            frame = candidate
+        elif candidate.get("type") == "error":
+            report.errors.append(str(candidate.get("detail")))
+
+    report.check(frame is not None, f"persona_request('{persona_id}') вернул кадр persona")
+    if frame is None:
+        report.body["verdict"] = "кадр persona не пришёл — триггера свопа нет"
+        return
+
+    report.check(bool(frame.get("swap", False)), f"кадр persona.swap = {frame.get('swap')!r}")
+    frame_vrm = frame.get("vrm")
+    report.body["frame_vrm"] = frame_vrm
+    report.check(
+        bool(frame_vrm),
+        f"кадр persona.vrm = {frame_vrm!r}"
+        + ("" if frame_vrm else " (нет тела на диске: face.yaml:vrm_path или personas/<id>/model.vrm)"),
+    )
+    if frame_vrm:
+        report.check(
+            base + str(frame_vrm) == built_url,
+            f"URL из кадра совпадает с построенным клиентом: {built_url}",
+        )
+
+    fetched = fetch_body(built_url, timeout=max(5.0, timeout))
+    report.body.update(fetched)
+    report.check(fetched["status"] == 200, f"GET {built_url} → {fetched['status']} {fetched['error'][:120]}")
+    report.check(fetched["magic"] == "glTF", f"тело — настоящий GLB: magic={fetched['magic']!r}, {fetched['bytes']} Б")
+    if fetched["status"] == 200 and fetched["magic"] == "glTF":
+        report.body["verdict"] = "тело доедет: URL живой, GLB валиден"
 
 
 def read_frames(ws: MiniWebSocket, report: Report, *, stop_when: Any, timeout: float = 8.0) -> Iterator[dict[str, Any]]:
@@ -296,6 +404,7 @@ def probe(
     group: str = "",
     timeout: float = 20.0,
     verbose: bool = False,
+    skip_body_check: bool = False,
 ) -> Report:
     """Прогнать сценарий клиента и вернуть отчёт."""
     report = Report()
@@ -344,6 +453,23 @@ def probe(
             }
         )
         ws.send_json({"type": "ready"})
+
+        # 2.5) хотфикс 0.6.4: «тело доезжает» — главная проверка приёмки F7.
+        #      Идём тем же путём, что и Unity-клиент: persona_request → кадр
+        #      persona → HTTP GET model.vrm по URL, построенному клиентом.
+        if not group and not skip_body_check:
+            hello_persona = str(first.get("persona") or "")
+            if hello_persona:
+                check_body_reaches_scene(
+                    ws,
+                    report,
+                    ws_url=url,
+                    persona_id=hello_persona,
+                    timeout=min(timeout, 10.0),
+                    verbose=verbose,
+                )
+            else:
+                report.check(False, "hello.persona пуста — проверять тело не для кого")
 
         # 3) своп персоны, если попросили
         if persona:
@@ -423,6 +549,12 @@ def print_report(report: Report, *, json_path: str = "") -> None:
     print("\n" + "=" * 74)
     print("ПРОБА UNITY-КЛИЕНТА · LILITH-CORE этап 6")
     print("=" * 74)
+    if report.body:
+        body = report.body
+        print(
+            f"тело: {body.get('persona', '?')} · GET {body.get('status', '-')} · "
+            f"{body.get('bytes', 0)} Б · magic {body.get('magic') or '-'} · {body.get('verdict', '')}"
+        )
     if report.hello:
         hello = report.hello
         print(
@@ -471,6 +603,11 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=20.0, help="таймаут ожидания кадров, с")
     parser.add_argument("--json", default="", help="куда сохранить JSON-отчёт")
     parser.add_argument("--verbose", action="store_true", help="печатать каждый кадр")
+    parser.add_argument(
+        "--skip-body-check",
+        action="store_true",
+        help="не проверять «тело доезжает» (хотфикс 0.6.4: persona_request + GET model.vrm)",
+    )
     args = parser.parse_args()
 
     report = probe(
@@ -481,6 +618,7 @@ def main() -> int:
         group=args.group,
         timeout=args.timeout,
         verbose=args.verbose,
+        skip_body_check=args.skip_body_check,
     )
     print_report(report, json_path=args.json)
     return 0 if report.failed == 0 else 1

@@ -202,6 +202,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    _register_access_log(app, settings)
+
     personas_dir = resolve_path(settings.app.personas_dir)
     personas_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/personas", StaticFiles(directory=str(personas_dir)), name="personas")
@@ -210,6 +212,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _register_routes(app)
     _register_error_handlers(app)
     return app
+
+
+def _register_access_log(app: FastAPI, settings: Settings) -> None:
+    """Access-лог для выбранных префиксов пути (**хотфикс 0.6.4**).
+
+    uvicorn поднимается с ``access_log=False`` (:mod:`lilith_core.run`), иначе
+    консоль и ``logs/lilith.log`` залиты поллингом веб-панели. Обратная сторона
+    вскрылась на приёмке F7: Unity качает тело по
+    ``GET /api/face/personas/<id>/model.vrm``, а в логе — тишина, и отличить
+    «клиент не постучался» от «сервер не отдал» было нечем.
+
+    Поэтому логируем точечно: только ``settings.logging.access_log_prefixes``
+    (по умолчанию ``/api/face/``),одна строка на запрос — метод, путь, статус, размер и
+    время. Остальные пути не трогаем вовсе: middleware уходит из них первым же
+    ``if``, без единой лишней строки в логе.
+    """
+    prefixes = tuple(prefix for prefix in (settings.logging.access_log_prefixes or ()) if prefix)
+    if not prefixes:
+        return
+
+    @app.middleware("http")
+    async def access_log_middleware(request: Request, call_next: Any) -> Any:
+        """Пропустить запрос и оставить строку в логе, если путь «наш»."""
+        if not request.url.path.startswith(prefixes):
+            return await call_next(request)
+
+        started = time.perf_counter()
+        response = await call_next(request)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        size = response.headers.get("content-length") or "?"
+        logger.info(
+            "HTTP {} {} → {} ({} Б, {:.1f} мс)",
+            request.method,
+            request.url.path,
+            response.status_code,
+            size,
+            elapsed_ms,
+        )
+        return response
 
 
 # --------------------------------------------------------------------------- #

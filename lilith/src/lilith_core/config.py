@@ -114,6 +114,14 @@ class LoggingSettings(_Section):
     console: bool = True
     backtrace: bool = True
     diagnose: bool = False
+    #: **Хотфикс 0.6.4.** Access-лог HTTP-запросов, чей путь начинается с одного
+    #: из этих префиксов. Пустой список = access-лог выключен.
+    #:
+    #: Зачем: uvicorn у нас поднимается с ``access_log=False`` (иначе консоль
+    #: залита поллингом веб-панели), и на приёмке F7 не было видно главного —
+    #: что Unity вообще **не** стучался за телом. Теперь каждый
+    #: ``GET /api/face/personas/<id>/model.vrm`` оставляет строку в логе.
+    access_log_prefixes: list[str] = Field(default_factory=lambda: ["/api/face/"])
 
     @property
     def file_path(self) -> Path:

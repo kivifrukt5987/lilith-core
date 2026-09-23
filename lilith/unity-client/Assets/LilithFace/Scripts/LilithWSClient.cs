@@ -58,6 +58,18 @@ namespace Lilith.Face
         /// <summary>Кадров принято всего.</summary>
         public long ReceivedFrames { get; private set; }
 
+        /// <summary>Сколько входящих кадров ждёт разбора (диагностика рукопожатия).</summary>
+        public int IncomingPending
+        {
+            get { return _incoming.Count; }
+        }
+
+        /// <summary>Сколько наших кадров ждёт отправки (диагностика рукопожатия).</summary>
+        public int OutgoingPending
+        {
+            get { return _outgoing.Count; }
+        }
+
         /// <summary>Событие: состояние изменилось (вызывается в фоновом потоке!).</summary>
         public event Action<WsState> StateChanged;
 
@@ -125,16 +137,21 @@ namespace Lilith.Face
 
             var socket = _socket;
             _socket = null;
-            if (socket != null && socket.State == WebSocketState.Open)
+            if (socket != null)
             {
+                // Хотфикс 0.6.5 (печать 2): здесь стояло
+                // `CloseAsync(...).Wait(TimeSpan.FromSeconds(1))` — блокировка
+                // вызывающего потока, а `DisconnectInternal` зовётся с главного
+                // (Connect/Disconnect/OnDestroy). Ждать close-рукопожатие нельзя ещё
+                // и потому, что наш `ReceiveLoopAsync` в этот момент уже держит
+                // `ReceiveAsync` на том же сокете. `Abort()` не блокирует никого.
                 try
                 {
-                    socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None)
-                        .Wait(TimeSpan.FromSeconds(1));
+                    socket.Abort();
                 }
                 catch (Exception)
                 {
-                    // закрытие может упасть, если сеть уже пропала
+                    // сокет мог уже умереть — не страшно
                 }
             }
 

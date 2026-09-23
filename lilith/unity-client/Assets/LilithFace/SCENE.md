@@ -24,6 +24,11 @@ LilithFace (Scene)
 │   │   • Local Position: (0, 0, 0)
 │   │   • Local Euler Angles: (0, 180, 0)   ← VRM смотрит в +Z, камера смотрит в +Z
 │   │   • Server Base Url: http://127.0.0.1:8765
+│   │   • Download Timeout Sec: 60
+│   │   • Await Timeout: 0.001              ← RuntimeOnlyAwaitCaller (0.6.3)
+│   │   • Load Timeout Seconds: 60          ← 0.6.5: 0 = ждать вечно
+│   │   • Load From Server Only: ❌         ← 0.6.5: форсировать HTTP-ветку
+│   │   • Use Immediate Await Caller: ❌    ← 0.6.5: загрузка в одном кадре (диагноз/авария)
 │   │
 │   ├── AudioSource            ← создаётся кодом: loop=true, playOnAwake=false, 2D
 │   │
@@ -31,6 +36,9 @@ LilithFace (Scene)
 │   │   • Config: тот же LilithClientConfig
 │   │   • Transparent Camera: Main Camera
 │   │   • Topmost: ✅   Borderless: ✅   Apply On Start: ✅
+│   │   • Хоткеи (0.6.6): F7 — сменить режим прозрачности ЖИВЬЁМ (A/B без ребилда)
+│   │                     F8 — вкл/выкл прозрачность, F9 — в правый нижний угол
+│   │                     Ctrl+Alt+Q — выход (окно без рамок не имеет крестика)
 │   │
 │   └── AvatarRoot             ← ПУСТОЙ: сюда VrmLoader поставит persona_<id>
 │
@@ -74,11 +82,18 @@ LilithFace (Scene)
 | | `Breath Amplitude` | `0.5` | переопределяется `face.yaml:idle.breath_amp` |
 | | `Look Speed` | `4` | переопределяется `face.yaml:idle.look_speed` |
 | | `Look At Cursor` | ✅ | взгляд за мышью (для стрима) |
+| Тело (**0.6.4**) | `Auto Load Body` | ✅ | добиваться тела сразу после `hello`: сервер сам кадр `persona` не шлёт (A5) |
+| | `Request Persona On Connect` | ✅ | слать `persona_request` — в кадре приезжают `vrm`, `face.window`, `idle`, `voice` |
+| | `Persona Frame Timeout Sec` | `2` | watchdog: кадр не пришёл → грузим по `{ServerBaseUrl}/api/face/personas/{id}/model.vrm` |
 | Окно | `Transparency` | `Dwm` | C4-г: `Dwm` / `LayeredColorKey` / `Off` |
 | | `Color Key` | `(255, 0, 255)` | для режима `LayeredColorKey` |
 | | `Window Size` | `512 × 640` | **Q5**: портрет 4:5 под OBS |
 | | `Use Persona Window Size` | ✅ | **Q5**: размер из `face.yaml: window` персоны |
 | | `Dock Bottom Right` | ✅ | требование: справа снизу на рабочем столе |
+| | `Window Tool Window` | ✅ | **0.6.6**: ✅ — окна нет в Alt+Tab и таскбаре (WS_EX_TOOLWINDOW); ❌ — WS_EX_APPWINDOW, переключается как обычное приложение |
+| | `Show Window Frame` | ❌ | **0.6.6**: ✅ — оставить заголовок/рамку/крестик (прозрачность при этом не работает). Основной способ закрытия — Ctrl+Alt+Q |
+| | `Close Hotkey Enabled` | ✅ | **0.6.6**: закрывать приложение хоткеем |
+| | `Close Hotkey` | `Q` | **0.6.6**: клавиша, срабатывает вместе с Ctrl+Alt |
 | | `Window Margin` | `24` | отступ от краёв экрана |
 | Служебное | `Stats Interval` | `5` | `stats` на сервер раз в 5 с (A5) |
 | | `Verbose` | ❌ | подробный лог кадров (дорого в рантайме) |
@@ -102,13 +117,19 @@ LilithFace (Scene)
             │
             ▼  Update() (главный поток: Unity API трогать только здесь)
 [Unity]  LilithFaceClient.HandleFrame
+            ├── "hello"    → ActivePersona + EnsureBodyOnConnect("hello")   ← хотфикс 0.6.4
+            │                     ├── persona_request{id}  → сервер шлёт кадр "persona"
+            │                     └── watchdog 2 с: кадр не пришёл →
+            │                            VrmLoader.Swap(id, "")  → URL строим сами
             ├── "audio"    → AudioQueueProcessor.Enqueue(pcm, utterance_id)
             │                     └── кольцевой AudioClip.SetData → AudioSource.Play
             ├── "viseme"   → VisemeDriver.ApplyServerMark      (только если просили)
             ├── "emotion"  → EmotionDriver.Apply(tag, intensity, ttl_ms)
-            ├── "persona"  → VrmLoader.Swap(id, face.vrm_path, vrm)
+            ├── "persona"  → if (swap) VrmLoader.Swap(id, face.vrm_path, vrm)
+            │                     ├── vrm пуст → ModelUrlFor(id) (0.6.4)
+            │                     ├── та же персона уже на сцене → пропуск (гвард)
             │                     └── Vrm10.LoadBytesAsync → Vrm10Instance
-            │                            └── FaceRig.Bind(model)
+            │                            └── FaceRig.Bind(model) + LastBody в оверлей
             ├── "focus"    → FocusedPersona (камера — на стороне Unity, E6)
             ├── "stop"     → AudioQueueProcessor.Stop(utterance_id) + Visemes.Reset
             ├── "done"     → AudioQueueProcessor.MarkUtteranceEnd
@@ -139,6 +160,27 @@ LilithFace (Scene)
 
 ---
 
+## 4.5. Player Settings — ОБЯЗАТЕЛЬНО для прозрачности в билде (0.6.6)
+
+Замер Г показал: режим `Dwm` применялся (`прозрачность окна: Dwm (hwnd=…)` в Player.log),
+но фон на Win10 19045 оставался **чёрным непрозрачным**. Причина не в Win32-коде,
+а в двух настройках плеера: Unity 6 по умолчанию отдаёт кадр через **flip model
+swapchain**, и альфа-канал до DWM не доезжает.
+
+| Где | Настройка | Значение | Зачем |
+|---|---|---|---|
+| Resolution and Presentation | **Fullscreen Mode** | `Fullscreen Window` | в Exclusive Fullscreen DWM-композиции нет вовсе |
+| Other Settings | **Use Flip Model Swapchain** | ❌ **снять** | flip-model отдаёт непрозрачный кадр — отсюда чёрный фон |
+| Quality | **Anti Aliasing** | `Disabled` | код и сам ставит `QualitySettings.antiAliasing = 0`, но в настройках надёжнее; MSAA размывает альфу по краям |
+| Graphics | **Always Included Shaders** | 6 старых + `Standard` + `UniGLTF/UniUnlit` | без этого в билде розовые/чёрные материалы (найдено на замере Г) |
+| Graphics | **Always Included Shaders** += `MToon10` | когда приедет настоящая VRoid-модель | процедурному кубику MToon не нужен |
+| Splash Image | **Show Splash Screen** | ❌ (Unity Plus/Pro) | пункт 5 донесения: сплэш Unity — это лицензионное окно плеера, оно появляется до нашей сцены и закрывается само. На Unity Personal отключить нельзя — это **норма**, не баг |
+
+Если после этих настроек фон всё равно чёрный: в билде нажать **F7** и посмотреть,
+в каком режиме стекло появляется (лог пишет каждую смену режима).
+
+---
+
 ## 5. Порядок сборки (чек-лист)
 
 - [ ] Unity Hub → Unity **6000.0.x LTS**
@@ -154,6 +196,9 @@ LilithFace (Scene)
 - [ ] Unity → **Play** → оверлей `Open · сервер 0.6.0 · персона lilith`
 - [ ] В панели нажать 🔊 → рот шевелится, звук идёт
 - [ ] Положить `lilith.vrm`, прописать `vrm_path` в `face.yaml` → своп в селекторе 🎭 меняет тело
+- [ ] Player Settings по разделу 4.5 (**Fullscreen Window** + **Use Flip Model Swapchain = ❌**)
 - [ ] Build → Windows x86_64 → `LilithFace.exe` → окно прозрачное, справа снизу
+- [ ] В Player.log есть строка `прозрачность окна: <режим> (hwnd=…) · toolWindow=… · frame=…`
+- [ ] Ctrl+Alt+Q закрывает окно; F7 меняет режим прозрачности живьём
 - [ ] OBS → Window Capture → фон прозрачный
 - [ ] Скриншот Кирюши = приёмка этапа (F7)

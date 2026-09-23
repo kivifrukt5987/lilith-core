@@ -482,6 +482,8 @@ class TestStage6UnityFace:
             "RELEASE_0.6.1.md",
             "RELEASE_0.6.2.md",
             "RELEASE_0.6.3.md",
+            "RELEASE_0.6.4.md",
+            "RELEASE_0.6.5.md",
             ".editorconfig",
         ],
     )
@@ -620,13 +622,33 @@ class TestDocsHygiene:
     #: папка бывает **гибридной** (проект из архива распакован поверх старого workspace):
     #: там `sync_test_count.py` может оказаться версии до 0.6.1, а `lilith/PLAN.md` —
     #: отсутствовать. Поэтому вместо красного падения — skip (хотфикс 0.6.2).
-    SYNC_SCRIPT = WORKSPACE_ROOT / "scripts" / "sync_test_count.py"
-    PLAN_FILE = WORKSPACE_ROOT / "lilith" / "PLAN.md"
+    #:
+    #: С 0.6.4 скрипт живёт **в проекте** (`lilith/scripts/`), чтобы уезжать в архиве
+    #: этапа, — но старая копия уровня workspace всё ещё может лежать в гибридной папке,
+    #: поэтому ищем обе и проверяем первую найденную (проектная приоритетнее).
+    SYNC_SCRIPT_CANDIDATES = (
+        PROJECT_ROOT / "scripts" / "sync_test_count.py",
+        WORKSPACE_ROOT / "scripts" / "sync_test_count.py",
+    )
+    #: PLAN.md в git-репо лежит в «память и личность/», в старом workspace — в lilith/.
+    PLAN_CANDIDATES = (
+        WORKSPACE_ROOT / "lilith" / "PLAN.md",
+        WORKSPACE_ROOT / "память и личность" / "PLAN.md",
+        PROJECT_ROOT / "PLAN.md",
+    )
+
+    @classmethod
+    def _first_existing(cls, candidates) -> "Path | None":
+        for path in candidates:
+            if path.is_file():
+                return path
+        return None
 
     def test_sync_script_is_surgical(self) -> None:
-        if not self.SYNC_SCRIPT.is_file():
-            pytest.skip("скрипт уровня workspace: в архиве этапа его нет")
-        text = self.SYNC_SCRIPT.read_text(encoding="utf-8")
+        script = self._first_existing(self.SYNC_SCRIPT_CANDIDATES)
+        if script is None:
+            pytest.skip("sync_test_count.py не найден ни в проекте, ни на уровне workspace")
+        text = script.read_text(encoding="utf-8")
         if "PLAN_MARKER" not in text and "ТЕСТЫ СЕЙЧАС" not in text:
             pytest.skip("локальная копия sync_test_count.py старше 0.6.1 (гибридная папка)")
         # CHANGELOG и исторические отчёты этапов скрипт трогать не должен
@@ -634,9 +656,10 @@ class TestDocsHygiene:
             assert banned not in text, f"sync_test_count.py снова лезет в {banned}"
 
     def test_plan_has_marker_line(self) -> None:
-        if not self.PLAN_FILE.is_file():
-            pytest.skip("lilith/PLAN.md — файл уровня workspace, в архиве этапа его нет")
-        plan = self.PLAN_FILE.read_text(encoding="utf-8")
+        plan_file = self._first_existing(self.PLAN_CANDIDATES)
+        if plan_file is None:
+            pytest.skip("PLAN.md — файл уровня workspace, в архиве этапа его нет")
+        plan = plan_file.read_text(encoding="utf-8")
         assert "ТЕСТЫ СЕЙЧАС:" in plan
 
     def test_changelog_keeps_stage_history(self) -> None:

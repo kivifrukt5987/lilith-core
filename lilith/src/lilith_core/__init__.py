@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.6.3"
+__version__ = "0.6.6"
 __stage__ = 6
 __app_name__ = "LILITH-CORE"
 __codename__ = "LILITH.EXE"

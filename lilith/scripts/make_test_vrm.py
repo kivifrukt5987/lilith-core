@@ -271,9 +271,20 @@ def build_vrm(name: str = "TestCube", author: str = "LILITH-CORE") -> bytes:
     index_accessor = buf.add_accessor(_pack_ushorts(head_indices), 5123, len(head_indices), "SCALAR", target=34963)
 
     # Скин: все вершины привязаны к кости head (joint 0 → индекс кости head).
+    #
+    # Хотфикс 0.6.5: JOINTS_0 объявлен как VEC4, значит на вершину нужно ЧЕТЫРЕ
+    # uint16, а не один. Раньше сюда писалось `[index] * count` — 48 байт вместо
+    # 192, то есть accessor выходил за пределы своего bufferView. По спеке glTF
+    # это нарушение, а UniVRM читал за границей вьюхи и получал мусорные индексы
+    # костей (до 65535 при 55 суставах). Пара к WEIGHTS_0 = [1, 0, 0, 0]:
+    # первый сустав держит весь вес, остальные три — нулевые.
     head_bone_index = HUMAN_BONES.index("head")
     joints_accessor = buf.add_accessor(
-        _pack_ushorts([head_bone_index] * head_vertex_count), 5123, head_vertex_count, "VEC4", target=34962
+        _pack_ushorts([head_bone_index, 0, 0, 0] * head_vertex_count),
+        5123,
+        head_vertex_count,
+        "VEC4",
+        target=34962,
     )
     weights_accessor = buf.add_accessor(
         _pack_floats([1.0, 0.0, 0.0, 0.0] * head_vertex_count), 5126, head_vertex_count, "VEC4", target=34962
@@ -300,7 +311,12 @@ def build_vrm(name: str = "TestCube", author: str = "LILITH-CORE") -> bytes:
 
     hips_bone_index = HUMAN_BONES.index("hips")
     body_joints_accessor = buf.add_accessor(
-        _pack_ushorts([hips_bone_index] * body_vertex_count), 5123, body_vertex_count, "VEC4", target=34962
+        # 0.6.5: то же, что и у head — VEC4 означает 4 uint16 на вершину.
+        _pack_ushorts([hips_bone_index, 0, 0, 0] * body_vertex_count),
+        5123,
+        body_vertex_count,
+        "VEC4",
+        target=34962,
     )
     body_weights_accessor = buf.add_accessor(
         _pack_floats([1.0, 0.0, 0.0, 0.0] * body_vertex_count), 5126, body_vertex_count, "VEC4", target=34962
@@ -417,7 +433,13 @@ def build_vrm(name: str = "TestCube", author: str = "LILITH-CORE") -> bytes:
             "allowPoliticalOrReligiousUsage": False,
             "allowAntisocialOrHateUsage": False,
             "avatarPermission": "onlyAuthor",
-            "commercialUsage": "personal",
+            # 0.6.6: было "personal" — такого значения в VRM 1.0 НЕТ
+            # (спека: personalNonProfit | personalProfit | corporation). Полевая
+            # правка Кирюши подтверждена спецификацией; гвард — validate() ниже.
+            "commercialUsage": "personalNonProfit",
+            "creditNotation": "required",
+            "allowRedistribution": False,
+            "modification": "prohibited",
             "otherLicenseUrl": "",
         },
         "humanoid": {"humanBones": human_bones},
@@ -481,6 +503,129 @@ def _world_position(bone: str, layout: dict[str, tuple[str | None, tuple[float, 
     return x, y, z
 
 
+#: Размер компоненты glTF по componentType (спека glTF 2.0, таблица accessor).
+_COMPONENT_SIZE = {5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4}
+
+#: Число компонент по типу accessor'а.
+_COMPONENT_COUNT = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT2": 4, "MAT3": 9, "MAT4": 16}
+
+
+def _validate_buffers(gltf: dict[str, Any], binary_length: int) -> None:
+    """Проверить геометрию bufferView/accessor (**хотфикс 0.6.5**).
+
+    Ровно та проверка, которой не хватало с этапа 6: генератор написал JOINTS_0
+    одним uint16 на вершину при объявленном VEC4, accessor вышел за границы
+    bufferView, и ``validate()`` этого не заметил — модель уехала в репо и в архив.
+    UniVRM на таких байтах читает за пределами вьюхи. Теперь любая подобная
+    рассинхронизация ловится до сохранения файла.
+    """
+    views = gltf.get("bufferViews", [])
+    accessors = gltf.get("accessors", [])
+    buffer_length = int(gltf["buffers"][0].get("byteLength", 0))
+    if buffer_length != binary_length:
+        raise ValueError(f"buffers[0].byteLength={buffer_length} != BIN-чанк {binary_length}")
+
+    for index, view in enumerate(views):
+        start = int(view.get("byteOffset", 0))
+        end = start + int(view["byteLength"])
+        if int(view["byteLength"]) <= 0:
+            raise ValueError(f"bufferView[{index}] нулевой длины")
+        if end > binary_length:
+            raise ValueError(f"bufferView[{index}] выходит за BIN-чанк: {end} > {binary_length}")
+
+    for index, accessor in enumerate(accessors):
+        component_type = int(accessor["componentType"])
+        accessor_type = accessor["type"]
+        if component_type not in _COMPONENT_SIZE:
+            raise ValueError(f"accessor[{index}]: неизвестный componentType {component_type}")
+        if accessor_type not in _COMPONENT_COUNT:
+            raise ValueError(f"accessor[{index}]: неизвестный type {accessor_type}")
+        need = _COMPONENT_SIZE[component_type] * _COMPONENT_COUNT[accessor_type] * int(accessor["count"])
+        view = views[int(accessor["bufferView"])]
+        offset = int(accessor.get("byteOffset", 0))
+        if offset + need > int(view["byteLength"]):
+            raise ValueError(
+                f"accessor[{index}] ({accessor_type}, componentType {component_type}, "
+                f"count {accessor['count']}) требует {offset + need} Б, "
+                f"а bufferView[{accessor['bufferView']}] вмещает {view['byteLength']} Б"
+            )
+
+    # Вершины одного примитива обязаны быть согласованы по count.
+    for mesh_index, mesh in enumerate(gltf.get("meshes", [])):
+        for prim_index, primitive in enumerate(mesh.get("primitives", [])):
+            counts = {}
+            for attribute, accessor_index in primitive.get("attributes", {}).items():
+                counts[attribute] = int(accessors[int(accessor_index)]["count"])
+            if len(set(counts.values())) > 1:
+                raise ValueError(f"mesh[{mesh_index}].primitive[{prim_index}]: атрибуты с разным count {counts}")
+            for target_index, target in enumerate(primitive.get("targets", [])):
+                for attribute, accessor_index in target.items():
+                    target_count = int(accessors[int(accessor_index)]["count"])
+                    if counts and target_count not in counts.values():
+                        raise ValueError(
+                            f"mesh[{mesh_index}].primitive[{prim_index}].targets[{target_index}]."
+                            f"{attribute}: count {target_count} != count вершин {counts}"
+                        )
+
+
+#: Допустимые значения enum-полей ``VRMC_vrm.meta`` по спецификации VRM 1.0
+#: (vrm-c/vrm-specification, specification/VRMC_vrm-1.0/meta.md, сверено 2026-09-22).
+#: Гвард 0.6.6: наш куб до правки писал ``commercialUsage: "personal"`` — значения
+#: нет в спеке, UniVRM такое либо отвергает, либо подставляет дефолт молча.
+META_ENUMS: dict[str, set[str]] = {
+    "avatarPermission": {"onlyAuthor", "onlySeparatelyLicensedPerson", "everyone"},
+    "commercialUsage": {"personalNonProfit", "personalProfit", "corporation"},
+    "creditNotation": {"required", "unnecessary"},
+    "modification": {"prohibited", "allowModification", "allowModificationRedistribution"},
+}
+
+#: Булевы поля меты (по спеке) — гвард против "yes"/"true"-строк.
+META_BOOLEANS: tuple[str, ...] = (
+    "allowExcessivelyViolentUsage",
+    "allowExcessivelySexualUsage",
+    "allowPoliticalOrReligiousUsage",
+    "allowAntisocialOrHateUsage",
+    "allowRedistribution",
+)
+
+
+def validate_meta(meta: dict[str, Any]) -> None:
+    """Проверить ``VRMC_vrm.meta`` против спецификации VRM 1.0.
+
+    Поднимает ``ValueError`` на любом отклонении: обязательные поля, enum-значения,
+    типы булевых. Это контрольный выстрел для полевой правки 0.6.6: куб со
+    значением ``"personal"`` обязан упасть здесь, а не молча доехать до Unity.
+    """
+    if not isinstance(meta, dict):
+        raise ValueError("meta — не объект")
+
+    name = meta.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("meta.name обязателен и не может быть пустым (спека VRM 1.0)")
+
+    authors = meta.get("authors")
+    if not isinstance(authors, list) or not any(isinstance(a, str) and a.strip() for a in authors):
+        raise ValueError("meta.authors обязан содержать хотя бы одну непустую строку (спека VRM 1.0)")
+
+    license_url = meta.get("licenseUrl")
+    if not isinstance(license_url, str) or not license_url.strip():
+        raise ValueError("meta.licenseUrl обязателен (спека VRM 1.0)")
+
+    for field, allowed in META_ENUMS.items():
+        if field not in meta:
+            continue  # поле опционально, у него есть дефолт по спеке
+        value = meta[field]
+        if value not in allowed:
+            raise ValueError(
+                f"meta.{field}={value!r} не входит в спецификацию VRM 1.0: "
+                f"допустимы {sorted(allowed)}"
+            )
+
+    for field in META_BOOLEANS:
+        if field in meta and not isinstance(meta[field], bool):
+            raise ValueError(f"meta.{field} обязан быть boolean, получено {type(meta[field]).__name__}")
+
+
 def validate(data: bytes) -> dict[str, Any]:
     """Перечитать собранный GLB и проверить структуру (без внешних библиотек)."""
     if len(data) < 20:
@@ -508,11 +653,18 @@ def validate(data: bytes) -> dict[str, Any]:
     if binary_offset + 8 + binary_length > len(data):
         raise ValueError("BIN-чанк выходит за пределы файла")
 
+    _validate_buffers(gltf, binary_length)
+
     vrm = gltf.get("extensions", {}).get("VRMC_vrm")
     if vrm is None:
         raise ValueError("нет расширения VRMC_vrm — это не VRM")
     if vrm.get("specVersion") != "1.0":
         raise ValueError(f"specVersion != 1.0: {vrm.get('specVersion')}")
+
+    meta = vrm.get("meta")
+    if meta is None:
+        raise ValueError("нет VRMC_vrm.meta")
+    validate_meta(meta)
 
     presets = set(vrm["expressions"]["preset"])
     # NB: в VRM 1.0 пресета "neutral" нет — нейтральное лицо это все веса по нулям.
@@ -529,6 +681,7 @@ def validate(data: bytes) -> dict[str, Any]:
         "expressions": sorted(presets),
         "morph_targets": len(gltf["meshes"][0]["primitives"][0].get("targets", [])),
         "binary_bytes": binary_length,
+        "commercial_usage": meta.get("commercialUsage"),
     }
 
 

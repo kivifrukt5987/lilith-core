@@ -86,16 +86,44 @@ namespace Lilith.Face
 
         private LilithWSClient _client;
         private System.Action<WsState> _onStateChanged;
-        private readonly Queue<System.Action> _mainThread = new Queue<System.Action>();
+        // Хотфикс 0.6.5 (печать 2): был `Queue<Action>` под `lock (_mainThread)`,
+        // и это был ЕДИНСТВЕННЫЙ кросс-поточный lock клиента: его держал главный поток
+        // (DrainMainThreadQueue вызывает действия внутри lock), а фонового потока он
+        // ждал в SetState → StateChanged → Enqueue. Lock-free очередь убирает саму
+        // возможность такой инверсии.
+        private readonly System.Collections.Concurrent.ConcurrentQueue<System.Action> _mainThread =
+            new System.Collections.Concurrent.ConcurrentQueue<System.Action>();
         private float _statsTimer;
         private float _pingTimer;
         private int _framesHandled;
         private int _audioFrames;
         private int _droppedAudio;
         private string _lastUtterance = "";
+        private string _overlayText = "";
+
+        // Хотфикс 0.6.4 (блокер F7): сервер шлёт кадр persona ТОЛЬКО в ответ на
+        // persona_request/activate, поэтому клиент обязан попросить его сам — иначе
+        // Swap() не вызывается никогда, и тело «молча» не появляется.
+        private bool _personaFrameSeen;
+        private Coroutine _personaWatchdog;
+        private string _personaRequestedFor = "";
+
+        // Хотфикс 0.6.5 (печать 2): id главного потока — чтобы в логе рукопожатия
+        // было видно, НЕ ушёл ли кто-то из Unity API в фоновый поток.
+        private int _mainThreadId;
+        private Coroutine _canary;
+
+        /// <summary>Пометка потока для логов рукопожатия: «main» или «ФОНОВЫЙ n».</summary>
+        private string ThreadTag()
+        {
+            var current = System.Threading.Thread.CurrentThread.ManagedThreadId;
+            return current == _mainThreadId ? "main" : $"ФОНОВЫЙ {current} (main={_mainThreadId})";
+        }
 
         private void Awake()
         {
+            _mainThreadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
+
             if (config == null)
             {
                 config = new LilithClientConfig();
@@ -158,6 +186,42 @@ namespace Lilith.Face
             }
         }
 
+        /// <summary>
+        /// Канарейка рукопожатия (хотфикс 0.6.5, печать 2): раз в 0.5 с печатает
+        /// «главный поток ЖИВ» и всё состояние рукопожатия. Это прибор, а не косметика:
+        /// если канарейка замолчала — главный поток заблокирован (и последняя строка hN
+        /// показывает где); если канарейка идёт, а кадров нет — застрял транспорт.
+        /// Работает только до конца рукопожатия (или 30 с), дальше сама выключается.
+        /// </summary>
+        private IEnumerator HandshakeCanary()
+        {
+            var started = Time.realtimeSinceStartup;
+            var tick = 0;
+            while (true)
+            {
+                yield return new WaitForSecondsRealtime(0.5f);
+                tick++;
+
+                var bodyDone = vrmLoader != null &&
+                               (vrmLoader.Model != null || !string.IsNullOrEmpty(vrmLoader.LastError));
+                if (bodyDone || Time.realtimeSinceStartup - started > 30f)
+                {
+                    Debug.Log($"[Lilith] рукопожатие: h9 — канарейка завершена на {tick}-м такте " +
+                              $"(тело {(bodyDone ? "доехало/отказало" : "не дождались за 30 с")})");
+                    yield break;
+                }
+
+                Debug.Log($"[Lilith] рукопожатие: h9 — канарейка #{tick}: главный поток ЖИВ " +
+                          $"(main={_mainThreadId}, текущий {System.Threading.Thread.CurrentThread.ManagedThreadId}) · " +
+                          $"состояние {State} · кадров принято {_framesHandled} · " +
+                          $"очередь действий {_mainThread.Count} · " +
+                          $"входящие {(_client != null ? _client.IncomingPending : -1)} · " +
+                          $"исходящие {(_client != null ? _client.OutgoingPending : -1)} · " +
+                          $"персона '{ActivePersona}' · кадр persona {_personaFrameSeen} · " +
+                          $"тело {(vrmLoader != null ? (vrmLoader.Loading ? "грузится" : vrmLoader.LastBody.Describe()) : "нет загрузчика")}");
+            }
+        }
+
         /// <summary>Подключиться к продюсеру лица.</summary>
         public void Connect()
         {
@@ -165,12 +229,41 @@ namespace Lilith.Face
             _client = new LilithWSClient(config.url, config.autoReconnect, config.reconnectDelay, config.reconnectMaxDelay);
             _onStateChanged = state => Enqueue(() => OnStateChanged(state));
             _client.StateChanged += _onStateChanged;
+
+            if (_canary != null)
+            {
+                StopCoroutine(_canary);
+            }
+
+            _canary = StartCoroutine(HandshakeCanary());
+            Debug.Log($"[Lilith] рукопожатие: h0 — Connect() на {_url_()}, канарейка заведена ({ThreadTag()})");
             _client.Connect();
+        }
+
+        private string _url_()
+        {
+            return config != null ? config.url : "(конфиг не задан)";
         }
 
         /// <summary>Разорвать соединение.</summary>
         public void Disconnect()
         {
+            // После разрыва следующее соединение обязано снова попросить кадр персоны.
+            _personaRequestedFor = "";
+            _personaFrameSeen = false;
+
+            // Watchdog снимаем только пока объект жив: StopCoroutine на уничтожаемом
+            // GameObject дал бы жёлтое предупреждение Unity (а нам нужны 0 жёлтых).
+            if (_personaWatchdog != null)
+            {
+                if (gameObject != null && gameObject.activeInHierarchy)
+                {
+                    StopCoroutine(_personaWatchdog);
+                }
+
+                _personaWatchdog = null;
+            }
+
             if (_client != null)
             {
                 if (_onStateChanged != null)
@@ -185,20 +278,23 @@ namespace Lilith.Face
 
         private void OnStateChanged(WsState state)
         {
-            if (config.verbose)
-            {
-                Debug.Log($"[Lilith] WS: {state}");
-            }
+            Debug.Log($"[Lilith] рукопожатие: h1 — состояние {state} ({ThreadTag()})");
 
             if (state == WsState.Open)
             {
                 SendClientHello();
+            }
+            else if (state == WsState.Disconnected || state == WsState.Failed)
+            {
+                _personaRequestedFor = "";
+                _personaFrameSeen = false;
             }
         }
 
         /// <summary>Рукопожатие клиента (A5): сразу говорим, нужны ли серверные виземы.</summary>
         public void SendClientHello()
         {
+            Debug.Log($"[Lilith] рукопожатие: h2 — шлю hello клиента ({ThreadTag()})");
             Send(new Dictionary<string, object>
             {
                 { "type", "hello" },
@@ -210,6 +306,8 @@ namespace Lilith.Face
             if (sendReadyOnConnect)
             {
                 Send(new Dictionary<string, object> { { "type", "ready" } });
+                Debug.Log($"[Lilith] рукопожатие: h2 — hello+ready поставлены в очередь отправки " +
+                          $"(в очереди {_client.OutgoingPending})");
             }
         }
 
@@ -221,6 +319,8 @@ namespace Lilith.Face
                 { "type", "persona_request" },
                 { "id", personaId },
             });
+            Debug.Log($"[Lilith] рукопожатие: h5 — persona_request('{personaId}') поставлен в очередь " +
+                      $"(в очереди {(_client != null ? _client.OutgoingPending : -1)}, {ThreadTag()})");
         }
 
         /// <summary>Попросить сервер сказать текст (удобно для тестов и хоткеев).</summary>
@@ -247,10 +347,7 @@ namespace Lilith.Face
 
         private void Enqueue(System.Action action)
         {
-            lock (_mainThread)
-            {
-                _mainThread.Enqueue(action);
-            }
+            _mainThread.Enqueue(action);
         }
 
         private void Update()
@@ -275,6 +372,11 @@ namespace Lilith.Face
             Idle.Tick(dt);
 
             HandleStats(dt);
+
+            if (showDebugOverlay)
+            {
+                BuildOverlayText();
+            }
         }
 
         private void LateUpdate()
@@ -282,21 +384,33 @@ namespace Lilith.Face
             Idle.LateTick();
         }
 
+        /// <summary>Потолок действий на один кадр: защита от livelock'а дренажа.</summary>
+        private const int MaxActionsPerFrame = 512;
+
         private void DrainMainThreadQueue()
         {
-            lock (_mainThread)
+            // Хотфикс 0.6.5 (печать 2): действия вызываются ВНЕ любой блокировки,
+            // а дренаж ограничен по количеству. Если очередь не иссякает, это
+            // не молчаливое зависание редактора, а красная строка в Console.
+            var processed = 0;
+            while (_mainThread.TryDequeue(out var action))
             {
-                while (_mainThread.Count > 0)
+                processed++;
+                try
                 {
-                    var action = _mainThread.Dequeue();
-                    try
-                    {
-                        action();
-                    }
-                    catch (System.Exception ex)
-                    {
-                        Debug.LogWarning($"[Lilith] действие в главном потоке упало: {ex.Message}");
-                    }
+                    action();
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogWarning($"[Lilith] действие в главном потоке упало: {ex.Message}");
+                }
+
+                if (processed >= MaxActionsPerFrame)
+                {
+                    Debug.LogError($"[Lilith] рукопожатие: дренаж очереди прерван на {processed} действиях — " +
+                                   $"очередь не иссякла (осталось {_mainThread.Count}). Это livelock, а не норма: " +
+                                   "кто-то ставит в очередь быстрее, чем мы разбираем.");
+                    return;
                 }
             }
         }
@@ -317,6 +431,16 @@ namespace Lilith.Face
 
         private void HandleFrame(string json)
         {
+            // Хотфикс 0.6.5 (печать 2): замер Б/В встал ДО разбора следующего кадра,
+            // поэтому h7 (кадр взят в обработку) сам по себе не отличает «завис в
+            // MiniJson.Deserialize» от «завис после него». h7a ставится ДО разбора и
+            // печатается только пока рукопожатие не закончилось — иначе audio-кадры
+            // (12/с) утопили бы Console.
+            if (!_personaFrameSeen)
+            {
+                Debug.Log($"[Lilith] рукопожатие: h7a — принят JSON {json.Length} Б, разбираю MiniJson ({ThreadTag()})");
+            }
+
             var frame = MiniJson.Deserialize(json) as Dictionary<string, object>;
             if (frame == null)
             {
@@ -325,6 +449,12 @@ namespace Lilith.Face
 
             _framesHandled++;
             var type = GetString(frame, "type");
+            if (type != "audio" && type != "viseme")
+            {
+                Debug.Log($"[Lilith] рукопожатие: h7 — кадр '{type}' взят в обработку " +
+                          $"(всего {_framesHandled}, входящих в очереди {_client.IncomingPending}, {ThreadTag()})");
+            }
+
             switch (type)
             {
                 case "hello":
@@ -379,6 +509,8 @@ namespace Lilith.Face
         // -- обработчики кадров ---------------------------------------------------- //
         private void OnHello(Dictionary<string, object> frame)
         {
+            Debug.Log($"[Lilith] рукопожатие: h3 — пришёл hello сервера (persona={GetString(frame, "persona")}, " +
+                      $"версия {GetString(frame, "server_version")}, {ThreadTag()})");
             var sampleRate = GetInt(frame, "sample_rate", config.sampleRate);
             var chunkBytes = GetInt(frame, "chunk_bytes", config.chunkBytes);
             ServerVersion = GetString(frame, "server_version");
@@ -403,6 +535,106 @@ namespace Lilith.Face
             {
                 Debug.Log($"[Lilith] hello: сервер {ServerVersion}, {sampleRate} Гц, чанк {chunkBytes} Б, персона {ActivePersona}");
             }
+
+            EnsureBodyOnConnect("hello");
+        }
+
+        /// <summary>
+        /// Хотфикс 0.6.4: добиться тела сразу после рукопожатия.
+        ///
+        /// Кадр ``persona`` сервер сам не шлёт (контракт A5/ADR-015: он приходит на
+        /// ``persona_request`` клиента или на ``POST /api/face/personas/{id}/activate``),
+        /// а без кадра ``LilithFaceClient.OnPersona`` не зовёт ``VrmLoader.Swap`` —
+        /// ровно так и выглядел блокер «тело не доезжает, Console чистая».
+        ///
+        /// Два ремня: (1) просим сервер прислать кадр (в нём же ``face.window``,
+        /// ``idle`` и ``voice`` персоны); (2) watchdog — если кадр не пришёл за
+        /// ``config.personaFrameTimeoutSec``, грузим по URL, построенному клиентом.
+        /// </summary>
+        private void EnsureBodyOnConnect(string reason)
+        {
+            Debug.Log($"[Lilith] рукопожатие: h4 — EnsureBodyOnConnect('{reason}') вход ({ThreadTag()})");
+            _personaFrameSeen = false;
+            if (_personaWatchdog != null)
+            {
+                StopCoroutine(_personaWatchdog);
+                _personaWatchdog = null;
+            }
+
+            if (string.IsNullOrEmpty(ActivePersona))
+            {
+                // Не warning: в групповой сцене hello-group id персоны и не несёт —
+                // тело придёт по кадру persona/join. Молчать об этом нельзя (0.6.3),
+                // а пугать жёлтым в Console — тоже.
+                Debug.Log($"[Lilith] тело: в кадре {reason} нет id персоны — жду кадр persona");
+                return;
+            }
+
+            if (config.requestPersonaOnConnect)
+            {
+                // Сервер шлёт hello дважды (на accept и в ответ на hello клиента) —
+                // без дедупликации мы попросили бы кадр персоны дважды и сервер
+                // сделал бы два свопа подряд.
+                if (_personaRequestedFor == ActivePersona)
+                {
+                    Debug.Log($"[Lilith] тело: кадр персоны '{ActivePersona}' в этом соединении уже запрошен — повтор не шлю");
+                }
+                else
+                {
+                    _personaRequestedFor = ActivePersona;
+                    Debug.Log($"[Lilith] тело: прошу у сервера кадр персоны '{ActivePersona}' (persona_request, {reason})");
+                    RequestPersona(ActivePersona);
+                }
+            }
+
+            if (!config.autoLoadBody)
+            {
+                return;
+            }
+
+            _personaWatchdog = StartCoroutine(PersonaWatchdog(reason));
+            Debug.Log($"[Lilith] рукопожатие: h6 — watchdog заведён на {config.personaFrameTimeoutSec:0.##} с, " +
+                      "EnsureBodyOnConnect выход");
+        }
+
+        /// <summary>
+        /// Страховка: если кадр ``persona`` так и не пришёл, тело всё равно должно появиться.
+        /// </summary>
+        private IEnumerator PersonaWatchdog(string reason)
+        {
+            yield return new WaitForSecondsRealtime(Mathf.Max(0.1f, config.personaFrameTimeoutSec));
+
+            if (_personaFrameSeen)
+            {
+                yield break;
+            }
+
+            Debug.LogWarning(
+                $"[Lilith] тело: кадр persona не пришёл за {config.personaFrameTimeoutSec:0.##} с ({reason}) — " +
+                "гружу по URL, который построила сама");
+            LoadBodyBySelfBuiltUrl($"watchdog после {reason}");
+        }
+
+        /// <summary>
+        /// Загрузить тело активной персоны без кадра ``persona``: URL построит
+        /// <see cref="VrmLoader.ModelUrlFor"/> из Server Base Url и id персоны.
+        /// </summary>
+        public void LoadBodyBySelfBuiltUrl(string reason = "")
+        {
+            if (vrmLoader == null)
+            {
+                Debug.LogError("[Lilith] тело: VrmLoader не назначен — грузить нечем");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(ActivePersona))
+            {
+                Debug.LogWarning("[Lilith] тело: не стартую — персона неизвестна");
+                return;
+            }
+
+            Debug.Log($"[Lilith] тело: старт без кадра persona ({reason}) → {vrmLoader.ModelUrlFor(ActivePersona)}");
+            vrmLoader.Swap(ActivePersona, "");
         }
 
         private void OnAudio(Dictionary<string, object> frame)
@@ -556,6 +788,13 @@ namespace Lilith.Face
             }
 
             ActivePersona = personaId;
+            _personaFrameSeen = true;
+            if (_personaWatchdog != null)
+            {
+                StopCoroutine(_personaWatchdog);
+                _personaWatchdog = null;
+            }
+
             Emotions.Reset();
             Visemes.Reset();
 
@@ -576,15 +815,27 @@ namespace Lilith.Face
                 }
             }
 
-            if (GetString(frame, "swap") != "" || frame.ContainsKey("swap"))
+            // Хотфикс 0.6.4: swap:false наконец уважаем (раньше срабатывало само
+            // наличие ключа), а лог больше не прячется за config.verbose — «тихий
+            // no-op» уже стоил нам приёмки F7.
+            var swap = GetBool(frame, "swap", true);
+            var source = !string.IsNullOrEmpty(vrmUrl) ? vrmUrl : localPath;
+            Debug.Log($"[Lilith] персона: {personaId} · swap={swap} · тело={(string.IsNullOrEmpty(source) ? "URL построим сами" : source)}");
+
+            if (!swap)
             {
-                vrmLoader.Swap(personaId, localPath, vrmUrl);
+                return;
             }
 
-            if (config.verbose)
+            if (vrmLoader == null)
             {
-                Debug.Log($"[Lilith] персона: {personaId}, vrm={vrmUrl ?? localPath}");
+                Debug.LogError($"[Lilith] тело: VrmLoader не назначен — '{personaId}' не загрузить");
+                return;
             }
+
+            Debug.Log($"[Lilith] рукопожатие: h8 — вызываю VrmLoader.Swap('{personaId}') ({ThreadTag()})");
+            vrmLoader.Swap(personaId, localPath, vrmUrl);
+            Debug.Log($"[Lilith] рукопожатие: h8 — Swap вернулся (Loading={vrmLoader.Loading})");
         }
 
         /// <summary>
@@ -664,6 +915,7 @@ namespace Lilith.Face
 
         private void OnVrmLoaded(string personaId, GameObject model)
         {
+            Debug.Log($"[Lilith] тело: фаза 7 — '{personaId}' привязано к ригу: {vrmLoader.LastBody.Describe()}");
             Rig.Bind(model);
             Idle.CaptureBreathOrigin(FindChest(model.transform));
             if (sceneCamera != null)
@@ -713,15 +965,14 @@ namespace Lilith.Face
             });
         }
 
-        private void OnGUI()
+        private void BuildOverlayText()
         {
-            if (!showDebugOverlay)
-            {
-                return;
-            }
-
+            var body = vrmLoader != null
+                ? (vrmLoader.Loading ? "грузится…" : vrmLoader.LastBody.Describe())
+                : "нет загрузчика";
             var text =
-                $"{State} · сервер {ServerVersion} · персона {ActivePersona}\n" +
+                $"{State} · сервер {ServerVersion} · персона {ActivePersona} · кадров {_framesHandled}\n" +
+                $"тело {body}\n" +
                 $"аудио {Audio.BufferedMs} мс · {_audioFrames} чанков · потерь {Audio.ChunksDropped}\n" +
                 $"{Visemes.Describe()}\n{Emotions.Describe()}\n{Idle.Describe()}";
 
@@ -730,7 +981,28 @@ namespace Lilith.Face
                 text += $"\nошибка: {LastError}";
             }
 
-            GUI.Label(new Rect(8, 8, Screen.width - 16, 120), text);
+            _overlayText = text;
+        }
+
+        /// <summary>
+        /// Оверлей (хотфикс 0.6.6, пункт 3): в билде текст быстро мигал, потому что
+        /// ``OnGUI`` вызывается несколько раз за кадр (Layout/Repaint/…), а значения
+        /// между вызовами меняются — глаз видит дрожание строки. Теперь строка
+        /// собирается ОДИН раз в ``Update`` и рисуется только на событии Repaint.
+        /// </summary>
+        private void OnGUI()
+        {
+            if (!showDebugOverlay)
+            {
+                return;
+            }
+
+            if (Event.current == null || Event.current.type != EventType.Repaint)
+            {
+                return;
+            }
+
+            GUI.Label(new Rect(8, 8, Screen.width - 16, 140), _overlayText);
         }
 
         // -- вспомогательное ------------------------------------------------------- //
@@ -818,6 +1090,37 @@ namespace Lilith.Face
             }
 
             return int.TryParse(value.ToString(), out var parsed) ? parsed : fallback;
+        }
+
+        /// <summary>
+        /// Bool из кадра: MiniJson отдаёт ``true/false`` как System.Boolean, но сервер
+        /// может прислать и строку/число — поэтому разбираем все варианты (хотфикс 0.6.4).
+        /// </summary>
+        private static bool GetBool(Dictionary<string, object> frame, string key, bool fallback)
+        {
+            object value;
+            if (!frame.TryGetValue(key, out value) || value == null)
+            {
+                return fallback;
+            }
+
+            if (value is bool b)
+            {
+                return b;
+            }
+
+            if (value is string text)
+            {
+                return !text.Equals("false", System.StringComparison.OrdinalIgnoreCase) &&
+                       !string.IsNullOrEmpty(text) && text != "0";
+            }
+
+            if (value is long number)
+            {
+                return number != 0;
+            }
+
+            return bool.TryParse(value.ToString(), out var parsed) ? parsed : fallback;
         }
 
         private static float GetFloat(Dictionary<string, object> frame, string key, float fallback)

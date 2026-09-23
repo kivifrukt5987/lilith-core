@@ -1,6 +1,19 @@
 // LILITH-CORE · Unity-клиент лица (этап 6)
 // Загрузчик VRM: горячий своп personas/<id>/model.vrm по кадру "persona".
 //
+// Хотфикс 0.6.4 (блокер F7 «тело не доезжает, Console чистая»): URL тела клиент
+// строит САМ — ModelUrlFor()/BuildModelUrl(); своп идемпотентен (гвард force);
+// старт/финиш/отказ логируются безусловно, а не под config.verbose.
+//
+// Хотфикс 0.6.5 (в переписке — 0.6.4.1): ДЕДЛОК РЕДАКТОРА. `yield return loadTask`
+// НЕ ждёт завершения Task (Unity 6000.0 из корутины умеет ждать только Awaitable,
+// а Task/generic Awaitable<T> — нет), поэтому код шёл дальше и брал
+// `loadTask.Result` у НЕзавершённой задачи. `.Result` блокирует главный поток,
+// а продолжения UniVRM планируются тем же player loop'ом (NextFrameTaskScheduler
+// → UnityLoopTaskScheduler.Update) → задача не может завершиться никогда.
+// Лечение: ждём по кадру (`while (!loadTask.IsCompleted) yield return null;`),
+// `.Result` — только после IsCompleted, плюс таймаут и фазовые логи.
+//
 // Решение D5.4: тело живёт ВНЕ репозитория, поэтому грузим либо с локального
 // диска (путь из face.yaml), либо по HTTP с сервера (/api/face/personas/<id>/model.vrm).
 // API UniVRM 0.131.2 (сверено по исходникам vrm-c/UniVRM, master):
@@ -39,6 +52,56 @@ namespace Lilith.Face
     }
 
     /// <summary>
+    /// Сводка успешной загрузки тела (хотфикс 0.6.4): что приехало, откуда и куда встало.
+    /// Нужна, чтобы «тело доехало» доказывалось логом и оверлеем, а не поиском в Hierarchy.
+    /// </summary>
+    public readonly struct BodyInfo
+    {
+        /// <summary>Чья модель.</summary>
+        public readonly string PersonaId;
+
+        /// <summary>Сколько байт приехало.</summary>
+        public readonly int Bytes;
+
+        /// <summary>Сколько секунд занял своп (скачивание + LoadBytesAsync).</summary>
+        public readonly float ElapsedSeconds;
+
+        /// <summary>Сколько трансформов в готовом теле (0 = тело пустое).</summary>
+        public readonly int Transforms;
+
+        /// <summary>Имя родителя, в который встало тело.</summary>
+        public readonly string Parent;
+
+        /// <summary>Собрать сводку.</summary>
+        public BodyInfo(string personaId, int bytes, float elapsedSeconds, int transforms, string parent)
+        {
+            PersonaId = personaId ?? "";
+            Bytes = bytes;
+            ElapsedSeconds = elapsedSeconds;
+            Transforms = transforms;
+            Parent = parent ?? "";
+        }
+
+        /// <summary>Есть ли что показывать (пустая сводка = тело ещё не грузилось).</summary>
+        public bool IsValid
+        {
+            get { return !string.IsNullOrEmpty(PersonaId) && Bytes > 0; }
+        }
+
+        /// <summary>Одна строка для оверлея.</summary>
+        public string Describe()
+        {
+            if (!IsValid)
+            {
+                return "нет";
+            }
+
+            return $"{PersonaId} · {Bytes / 1048576f:F2} МБ · {ElapsedSeconds * 1000f:F0} мс · " +
+                   $"трансформов {Transforms} · родитель {Parent}";
+        }
+    }
+
+    /// <summary>
     /// Загружает и подменяет VRM-тело персоны на лету.
     /// MonoBehaviour: корутины загрузки живут на сцене.
     /// </summary>
@@ -69,6 +132,22 @@ namespace Lilith.Face
                  "Дефолт UniVRM — 1 мс; больше = плавнее загрузка, меньше просадка fps.")]
         public float awaitTimeoutSeconds = 0.001f;
 
+        [Tooltip("Хотфикс 0.6.5: сколько секунд ждать завершения Vrm10.LoadBytesAsync.\n" +
+                 "Ждём НЕ блокируя главный поток (по кадру), поэтому зависание\n" +
+                 "превращается в понятный ОТКАЗ в Console. 0 = ждать вечно.")]
+        public float loadTimeoutSeconds = 60f;
+
+        [Tooltip("Хотфикс 0.6.5: грузить тело ТОЛЬКО по HTTP с сервера, игнорируя\n" +
+                 "face.yaml:vrm_path из кадра persona. Диагностика: позволяет сравнить\n" +
+                 "ветку файла и ветку сервера на одних и тех же байтах.")]
+        public bool loadFromServerOnly = false;
+
+        [Tooltip("Хотфикс 0.6.5: использовать UniGLTF.ImmediateCaller (вся загрузка\n" +
+                 "в одном кадре, без next-frame планировщика) вместо RuntimeOnlyAwaitCaller.\n" +
+                 "Дедлок исключён конструктивно; цена — один длинный кадр.\n" +
+                 "Для больших тел (20+ МБ) держать выключенным.")]
+        public bool useImmediateAwaitCaller = false;
+
         /// <summary>Текущая загруженная модель (или null).</summary>
         public GameObject Model { get; private set; }
 
@@ -81,6 +160,12 @@ namespace Lilith.Face
         /// <summary>Идёт ли загрузка прямо сейчас.</summary>
         public bool Loading { get; private set; }
 
+        /// <summary>
+        /// Сводка последней успешной загрузки — для оверлея и приёмки F7
+        /// (хотфикс 0.6.4: «тело доехало» должно быть видно без Hierarchy).
+        /// </summary>
+        public BodyInfo LastBody { get; private set; }
+
         /// <summary>Вызывается после успешной загрузки: (персона, модель).</summary>
         public event Action<string, GameObject> Loaded;
 
@@ -89,25 +174,87 @@ namespace Lilith.Face
 
         private Coroutine _running;
         private int _generation;
+        private string _loadingPersona = "";
+
+        /// <summary>Чьё тело грузится прямо сейчас (для гварда повторного свопа).</summary>
+        public string LoadingPersona
+        {
+            get { return _loadingPersona; }
+        }
 
         /// <summary>
         /// Горячий своп тела персоны.
+        ///
+        /// Хотфикс 0.6.4 (блокер F7 «тело не доезжает»):
+        /// * если <paramref name="serverRelativePath"/> пуст, URL строится САМ
+        ///   (<see cref="ModelUrlFor"/>) — эндпоинт модели существует отдельно от кадра
+        ///   persona (D5.4/ADR-017), поэтому «сервер не прислал vrm» больше не тупик;
+        /// * гвард идемпотентности: та же персона уже на сцене → повторной загрузки нет
+        ///   (hello и persona приходят подряд, без гварда тело качалось бы дважды);
+        /// * старт/финиш/отказ логируются безусловно, а не под <c>config.verbose</c>.
         /// </summary>
         /// <param name="personaId">Id персоны.</param>
         /// <param name="localPath">Локальный путь к .vrm (из face.yaml); может быть пустым.</param>
-        /// <param name="serverRelativePath">Относительный URL на сервере (из кадра persona.vrm).</param>
-        public void Swap(string personaId, string localPath, string serverRelativePath = "")
+        /// <param name="serverRelativePath">Относительный URL на сервере (из кадра persona.vrm); пусто → построим сами.</param>
+        /// <param name="force">Перезагрузить тело, даже если эта персона уже на сцене.</param>
+        public void Swap(string personaId, string localPath, string serverRelativePath = "", bool force = false)
         {
-            if (Loading)
+            if (!force && !Loading && Model != null &&
+                !string.IsNullOrEmpty(personaId) && CurrentPersona == personaId)
             {
-                if (_running != null)
-                {
-                    StopCoroutine(_running);
-                }
+                Debug.Log($"[Lilith] тело: '{personaId}' уже на сцене — повторный своп не нужен (force=false)");
+                return;
             }
 
+            // Хотфикс 0.6.4: сервер шлёт hello ДВАЖДЫ (на accept и в ответ на hello
+            // клиента), поэтому без этого гварда одно и то же тело качалось бы дважды
+            // подряд — на 20 МБ это выглядит как «загрузка зависла».
+            if (!force && Loading && !string.IsNullOrEmpty(personaId) && _loadingPersona == personaId)
+            {
+                Debug.Log($"[Lilith] тело: '{personaId}' уже грузится — повторный своп пропущен (force=false)");
+                return;
+            }
+
+            var relative = serverRelativePath;
+            var source = "URL из кадра persona";
+            if (string.IsNullOrEmpty(relative))
+            {
+                relative = ModelUrlFor(personaId);
+                source = "URL построен клиентом";
+            }
+
+            if (Loading && _running != null)
+            {
+                StopCoroutine(_running);
+            }
+
+            _loadingPersona = personaId ?? "";
             _generation++;
-            _running = StartCoroutine(SwapRoutine(personaId, localPath, serverRelativePath, _generation));
+            _running = StartCoroutine(SwapRoutine(personaId, localPath, relative, _generation, source));
+        }
+
+        /// <summary>
+        /// URL тела персоны на сервере: <c>{ServerBaseUrl}/api/face/personas/{id}/model.vrm</c>.
+        /// Хотфикс 0.6.4: клиент умеет построить его сам, не дожидаясь поля <c>vrm</c> в кадре.
+        /// </summary>
+        public string ModelUrlFor(string personaId)
+        {
+            return BuildModelUrl(serverBaseUrl, personaId);
+        }
+
+        /// <summary>
+        /// Чистая функция построения URL тела (проверяется гвардами без сцены и без сети).
+        /// Лишние слэши на стыке base и path не появляются, id экранируется.
+        /// </summary>
+        public static string BuildModelUrl(string baseUrl, string personaId)
+        {
+            if (string.IsNullOrEmpty(personaId))
+            {
+                return "";
+            }
+
+            var root = (baseUrl ?? "").Trim().TrimEnd('/');
+            return root + "/api/face/personas/" + Uri.EscapeDataString(personaId.Trim()) + "/model.vrm";
         }
 
         /// <summary>Убрать тело со сцены (например, при отключении от сервера).</summary>
@@ -121,22 +268,40 @@ namespace Lilith.Face
 
             DestroyModel();
             CurrentPersona = "";
+            _loadingPersona = "";
+            LastBody = default;
         }
 
-        private IEnumerator SwapRoutine(string personaId, string localPath, string serverRelativePath, int generation)
+        private IEnumerator SwapRoutine(
+            string personaId,
+            string localPath,
+            string serverRelativePath,
+            int generation,
+            string urlSource = "")
         {
             Loading = true;
             LastError = "";
+            var startedAt = Time.realtimeSinceStartup;
 
             byte[] bytes = null;
-            var path = ResolveLocalPath(localPath);
+            // Хотфикс 0.6.5: loadFromServerOnly форсирует HTTP-ветку, даже если кадр
+            // persona принёс face.vrm_path (у Кирюши там локальный оверрайд).
+            var path = loadFromServerOnly ? "" : ResolveLocalPath(localPath);
+            if (loadFromServerOnly && !string.IsNullOrEmpty(localPath))
+            {
+                Debug.Log($"[Lilith] тело: фаза 0 — loadFromServerOnly=true, локальный путь '{localPath}' проигнорирован");
+            }
+
             if (!string.IsNullOrEmpty(path) && File.Exists(path))
             {
+                Debug.Log($"[Lilith] тело: старт свопа '{personaId}' ← файл {path}");
                 bytes = File.ReadAllBytes(path);
+                Debug.Log($"[Lilith] тело: фаза 1 — байты прочитаны с диска: {bytes.Length} Б");
             }
             else if (!string.IsNullOrEmpty(serverRelativePath))
             {
                 var url = BuildUrl(serverRelativePath);
+                Debug.Log($"[Lilith] тело: старт свопа '{personaId}' ← GET {url} ({urlSource})");
                 using (var request = UnityWebRequest.Get(url))
                 {
                     request.timeout = downloadTimeoutSec;
@@ -149,20 +314,21 @@ namespace Lilith.Face
                     {
                         Loading = false;
                         LastError = $"{url}: {request.error}";
-                        Debug.LogWarning($"[Lilith] не скачать VRM: {LastError}");
+                        Debug.LogWarning($"[Lilith] тело: ОТКАЗ '{personaId}' — не скачать {url}: {request.error}");
                         Failed?.Invoke(personaId, VrmLoadResult.DownloadFailed);
                         yield break;
                     }
 
                     bytes = request.downloadHandler.data;
+                    Debug.Log($"[Lilith] тело: фаза 1 — скачано {(bytes != null ? bytes.Length : 0)} Б с {url}");
                 }
             }
             else
             {
                 Loading = false;
-                LastError = "нет ни локального пути, ни URL модели";
-                Debug.LogWarning($"[Lilith] {personaId}: {LastError}. " +
-                                 "Положи .vrm по пути из face.yaml или отдай его через /api/face/personas/<id>/model.vrm");
+                LastError = "нет ни локального пути, ни id персоны: URL тела построить не из чего";
+                Debug.LogWarning($"[Lilith] тело: ОТКАЗ — {LastError}. " +
+                                 "Проверь Server Base Url и id персоны (кадр hello.persona)");
                 Failed?.Invoke(personaId, VrmLoadResult.NotFound);
                 yield break;
             }
@@ -171,6 +337,7 @@ namespace Lilith.Face
             {
                 Loading = false;
                 LastError = "пустой файл модели";
+                Debug.LogWarning($"[Lilith] тело: ОТКАЗ '{personaId}' — {LastError} ({(bytes != null ? bytes.Length : 0)} Б)");
                 Failed?.Invoke(personaId, VrmLoadResult.NotFound);
                 yield break;
             }
@@ -179,6 +346,7 @@ namespace Lilith.Face
             {
                 // Пока качали, пришёл новый своп — этот уже не нужен.
                 Loading = false;
+                Debug.Log($"[Lilith] тело: своп '{personaId}' устарел (generation {generation} → {_generation})");
                 yield break;
             }
 
@@ -194,12 +362,27 @@ namespace Lilith.Face
                 // RuntimeOnlyAwaitCaller поддерживает только Play Mode: вне игры его
                 // NextFrameTaskScheduler бросает NotSupportedException (проверено по
                 // исходникам UniVRM 0.131.2). Ловим это отдельной веткой — см. ниже.
+                //
+                // Хотфикс 0.6.5: ImmediateCaller (UniGLTF v0.131.2, сверено по исходникам:
+                // Packages/UniGLTF/Runtime/Utils/AwaitCaller/ImmediateCaller.cs —
+                // `public sealed class ImmediateCaller : IAwaitCaller`, «синхронное
+                // исполнение»: NextFrame/Run/Run<T> возвращают уже завершённые Task)
+                // НЕ зависит от next-frame планировщика, поэтому дедлок с ним
+                // невозможен конструктивно. Это и рабочий режим для мелких тел,
+                // и диагноз: если с ImmediateCaller грузится, а с RuntimeOnly нет —
+                // виноват планировщик кадров, а не байты модели.
+                IAwaitCaller awaitCaller = useImmediateAwaitCaller
+                    ? new ImmediateCaller()
+                    : new RuntimeOnlyAwaitCaller(awaitTimeoutSeconds);
+                Debug.Log($"[Lilith] тело: фаза 2 — awaitCaller: {(useImmediateAwaitCaller ? "ImmediateCaller (синхронно, один кадр)" : $"RuntimeOnlyAwaitCaller({awaitTimeoutSeconds})")}");
+
                 loadTask = Vrm10.LoadBytesAsync(
                     bytes,
                     canLoadVrm0X: true,
                     controlRigGenerationOption: ControlRigGenerationOption.Generate,
                     showMeshes: true,
-                    awaitCaller: new RuntimeOnlyAwaitCaller(awaitTimeoutSeconds));
+                    awaitCaller: awaitCaller);
+                Debug.Log($"[Lilith] тело: фаза 3 — задача LoadBytesAsync создана, {(loadTask != null && loadTask.IsCompleted ? "уже завершена" : "ждём завершения")}");
             }
             catch (NotSupportedException notSupported)
             {
@@ -218,7 +401,43 @@ namespace Lilith.Face
                 yield break;
             }
 
-            yield return loadTask;
+            // Хотфикс 0.6.5 (ДЕДЛОК): `yield return loadTask` в Unity 6000.0 не ждёт
+            // Task — из корутины поддерживается только Awaitable (generic Awaitable<T>
+            // и Task — нет, см. Manual «Write and run coroutines»). Незнакомый объект
+            // трактуется как «один кадр», поэтому следующий шаг брал `loadTask.Result`
+            // у незавершённой задачи: `.Result` блокирует главный поток, а продолжения
+            // UniVRM enqueue'ятся в NextFrameTaskScheduler → UnityLoopTaskScheduler.Update()
+            // (тот же главный поток). Итог: задача не может завершиться никогда,
+            // редактор виснет намертво. Ждём по кадру и НЕ блокируем поток.
+            var waitStarted = Time.realtimeSinceStartup;
+            var waitFrames = 0;
+            var nextReport = 0.5f;
+            while (!loadTask.IsCompleted)
+            {
+                yield return null;
+                waitFrames++;
+                var waited = Time.realtimeSinceStartup - waitStarted;
+                if (waited >= nextReport)
+                {
+                    nextReport += 0.5f;
+                    Debug.Log($"[Lilith] тело: фаза 4 — ждём LoadBytesAsync: {waited:F1} с, {waitFrames} кадров (главный поток не блокирован)");
+                }
+
+                if (loadTimeoutSeconds > 0f && waited >= loadTimeoutSeconds)
+                {
+                    Loading = false;
+                    LastError = $"загрузка VRM не завершилась за {loadTimeoutSeconds:F0} с ({waitFrames} кадров ожидания)";
+                    Debug.LogError($"[Lilith] тело: ОТКАЗ '{personaId}' — {LastError}. " +
+                                   "Задача брошена незавершённой (если она завершится позже, в сцене может " +
+                                   "появиться объект-сирота — снеси его руками). Что попробовать: " +
+                                   "useImmediateAwaitCaller=true (загрузка в одном кадре, без next-frame " +
+                                   "планировщика) и/или loadFromServerOnly=true.");
+                    Failed?.Invoke(personaId, VrmLoadResult.LoadFailed);
+                    yield break;
+                }
+            }
+
+            Debug.Log($"[Lilith] тело: фаза 5 — задача завершена: {waitFrames} кадров, {(Time.realtimeSinceStartup - waitStarted) * 1000f:F0} мс");
 
             if (loadTask.IsFaulted)
             {
@@ -234,10 +453,13 @@ namespace Lilith.Face
             {
                 Loading = false;
                 LastError = "загрузка VRM отменена";
+                Debug.LogWarning($"[Lilith] тело: ОТКАЗ '{personaId}' — {LastError}");
                 Failed?.Invoke(personaId, VrmLoadResult.LoadFailed);
                 yield break;
             }
 
+            // Безопасно: цикл выше выходит только при IsCompleted, а ветки IsFaulted
+            // и IsCanceled уже разобраны — блокировки на `.Result` быть не может.
             instance = loadTask.Result;
 
             if (generation != _generation)
@@ -249,6 +471,7 @@ namespace Lilith.Face
                 }
 
                 Loading = false;
+                Debug.Log($"[Lilith] тело: своп '{personaId}' устарел после загрузки (generation {generation} → {_generation})");
                 yield break;
             }
 
@@ -256,6 +479,7 @@ namespace Lilith.Face
             {
                 Loading = false;
                 LastError = "Vrm10.LoadBytesAsync вернул null";
+                Debug.LogError($"[Lilith] тело: ОТКАЗ '{personaId}' — {LastError} (байт: {bytes.Length})");
                 Failed?.Invoke(personaId, VrmLoadResult.LoadFailed);
                 yield break;
             }
@@ -274,6 +498,16 @@ namespace Lilith.Face
 
             CurrentPersona = personaId;
             Loading = false;
+            LastBody = new BodyInfo(
+                personaId,
+                bytes.Length,
+                Time.realtimeSinceStartup - startedAt,
+                Model.GetComponentsInChildren<Transform>().Length,
+                root != null ? root.name : "(без root)");
+            Debug.Log(
+                $"[Lilith] тело: фаза 6 — ГОТОВО '{personaId}' за {LastBody.ElapsedSeconds * 1000f:F0} мс · " +
+                $"{LastBody.Bytes / 1048576f:F2} МБ · трансформов {LastBody.Transforms} · " +
+                $"родитель {LastBody.Parent} · детей у родителя {(root != null ? root.childCount : 0)}");
             Loaded?.Invoke(personaId, Model);
 #else
             // Без UniVRM загрузка невозможна, но и «падать» клиент не должен:
@@ -281,7 +515,9 @@ namespace Lilith.Face
             DestroyModel();
             Loading = false;
             LastError = "LILITH_UNIVRM не определён: установи UniVRM и добавь символ в Scripting Define Symbols";
-            Debug.LogError("[Lilith] " + LastError);
+            Debug.LogError($"[Lilith] тело: ОТКАЗ '{personaId}' — {LastError} " +
+                           $"(источник: {urlSource}, байт получено {(bytes != null ? bytes.Length : 0)}, " +
+                           $"{(Time.realtimeSinceStartup - startedAt) * 1000f:F0} мс)");
             Failed?.Invoke(personaId, VrmLoadResult.UniVrmMissing);
             yield break;
 #endif
