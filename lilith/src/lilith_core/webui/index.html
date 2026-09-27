@@ -122,6 +122,7 @@
   <button id="btnReconnect" title="Переподключиться">переподключить</button>
   <button id="btnMem" title="Настройки памяти (этап 3)">⚙ память</button>
   <button id="btnVoice" title="Озвучивать ответы (этап 5)">🔊 выкл</button>
+  <select id="voiceEngine" class="sel" title="Движок горла (0.7.0, ADR-027): qwen3 — резидент («корона»), остальные — «шкаф платьев» (ленивые; при переодевании резидент выгружается)"></select>
   <select id="persona" title="Активная персона (этап 6): меняет VRM, голос и карточку"></select>
 </header>
 
@@ -597,6 +598,54 @@ $("btnVoice").onclick = () => {
 };
 
 // ---------------------------------------------------------------------------
+//  Движок горла (0.7.0, ADR-027): «одна корона + шкаф платьев».
+//  Резидент qwen3 живёт в памяти; переодевание — явное действие Курьера
+//  (выбор + подтверждение), прежние движки выгружаются: POST /api/voice/engine.
+// ---------------------------------------------------------------------------
+function loadVoiceEngines() {
+  fetch("/api/voice/engine").then(r => r.json()).then(data => {
+    const sel = $("voiceEngine");
+    if (!data || data.status === "disabled") { sel.hidden = true; return; }
+    sel.hidden = false;
+    sel.innerHTML = "";
+    for (const [name, info] of Object.entries(data.engines || {})) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = "🎙 " + name + (name === data.resident ? " 👑" : "") +
+        (info.loaded ? " ●" : "") + (info.available ? "" : " ✗");
+      opt.title = info.reason || (name === data.resident ? "резидент (ADR-027)" : name);
+      sel.appendChild(opt);
+    }
+    const none = document.createElement("option");
+    none.value = "none";
+    none.textContent = "🎙 без короны (ленивый режим)";
+    sel.appendChild(none);
+    if (data.resident) sel.value = data.resident;
+  }).catch(() => { $("voiceEngine").hidden = true; });
+}
+$("voiceEngine").onchange = () => {
+  const name = $("voiceEngine").value;
+  const ok = confirm("Переключить движок горла на «" + name + "»?\n\n" +
+    "Загруженные движки (включая текущего резидента) будут выгружены — VRAM вернётся;\n" +
+    "новый загрузится на первой реплике. (ADR-027: явное переодевание из «шкафа»)");
+  if (!ok) { loadVoiceEngines(); return; }
+  fetch("/api/voice/engine", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  }).then(r => r.json()).then(res => {
+    if (res.status === "ok") {
+      addMsg("sys", "🎙 переодевание: корона — " + (res.engine.resident || "нет") +
+        " (выгружены: " + (res.engine.unloaded.join(", ") || "ничего") + ")" +
+        (res.engine.available === false ? " · движок недоступен: " + res.engine.reason : ""));
+    } else {
+      addMsg("err", "переодевание не вышло: " + (res.detail || JSON.stringify(res)));
+    }
+    loadVoiceEngines();
+  }).catch(e => { addMsg("err", "ошибка переключения движка: " + e); loadVoiceEngines(); });
+};
+
+// ---------------------------------------------------------------------------
 //  Соединение
 // ---------------------------------------------------------------------------
 function connect() {
@@ -679,6 +728,7 @@ fetch("/healthz").then(r => r.json()).then(h => {
 addMsg("sys", "🦇 LILITH-CORE web panel · жду соединения…");
 loadProfiles();
 loadTokenStats();
+loadVoiceEngines();
 connect();
 </script>
 </body>

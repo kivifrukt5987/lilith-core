@@ -4,6 +4,58 @@
 
 ---
 
+## 0.7.0 (27.09.2026) — голос: резидент Qwen3-TTS + «шкаф платьев»
+
+**Этап «Голос» по финальной директиве Архитектора (ADR-027/028).** Mock-чанк «прык»
+умирает в бою: горло — единственная корона `qwen3` (Qwen3-TTS-12Hz-0.6B-Base через
+`faster-qwen3-tts`, PyPI) на всех персон, души — `personas/<id>/voice/reference.wav`
+из `scripts/voice_preview.py` (Voice Design 1.7B офлайн + контрольный клон). Альтернативы
+(silero/edge/cosyvoice2/fish) — ленивый «шкаф»: переодевание явным действием (панель «🎙 голос»
++ подтверждение или `POST /api/voice/engine`), прежний резидент выгружается — VRAM бережётся
+для игр и сюжетных LLM. Подробности — `RELEASE_0.7.0.md`, решения — ADR-027/028.
+
+### Добавлено
+
+* **`voice/tts_qwen3.py`** — движок Qwen3-TTS: clone/custom/design, нативный стриминг
+  чанками кодека (`chunk_size=8` ≈ 667 мс, TTFA в логе), `ref_text` путь-или-строка,
+  деградация в `xvec_only` без транскрипции, warmup/unload/loaded.
+* **Резидент + шкаф**: `voice.tts_resident` в конфиге, `TTSRegistry.resident/switch_resident/
+  pick_fallback/engine_info`, слоты `voice/closet.py` (CosyVoice 2, Fish Speech — честные
+  заглушки до своего этапа), `unload()` у silero.
+* **Фолбэк по ошибке (ADR-012 усилен)**: `speak/stream` при падении движка уходят на
+  следующий доступный; середина стрима не перезапускается.
+* **`scripts/voice_preview.py`**: 10–15 вариаций души из instruct + seed (`--random-seeds`),
+  `manifest.yaml`-паспорт, `--adopt N` → `personas/<id>/voice/{reference.wav,reference.txt,
+  soul.yaml}`, `--verify-clone` на резидентной 0.6B.
+* **Нонвербалика (Q7-б)**: `voice/nonverbal.py` (теги → wav-пакеты,
+  `personas/<id>/voice/nonverbal/*.wav`) + `VoiceCore.stream_mixed`; проводка в WS-протокол — 0.7.1.
+* **API/панель**: `GET/POST /api/voice/engine`, селектор «🎙 голос» с подтверждением,
+  `describe()` расширен (`tts-resident`, `tts_engines`).
+* **Конфиг**: профили `lilith-soul`/`olya-soul`, профиль мозга `gm` (:1237, MoE + `--n-cpu-moe`,
+  ADR-028), extras `[voice-qwen]` (`faster-qwen3-tts>=0.5.2,<0.6`), NB 0.7.0 в packs.yaml
+  (веса Qwen3-TTS — авто-загрузка HF, не пак).
+* **Гварды**: +75 (test_voice_qwen3 / test_voice_preview / test_nonverbal / test_voice_engine_app);
+  dual-distribution страж `qwen-tts` vs `qwen-tts-hf`.
+
+### Изменено
+
+* `torch>=2.5.1` (было 2.2) в extras `[voice]` — захват CUDA-графов на ≤2.5.0 нестабилен.
+* `config.yaml`: `tts_enabled: true`, `tts_resident: "qwen3"`; `default_voice` остаётся
+  `lilith` (silero) до усыновления души — Курьер переключает горячо.
+* Контракт `TTSBackend` расширен `loaded/unload/warmup` (дефолты безопасные, старые бэкенды не сломаны).
+
+### Как проверить
+
+1. `pip install -e .[voice,voice-qwen]` (драйвер CUDA 13.2 — дефолтное колесо torch).
+2. `start.bat`: в логе — прогрев резидента (первый раз качает ~2.6 ГБ весов и захватывает
+   CUDA-графы); панель → «🎙 голос» → qwen3 👑.
+3. Маршрут Замера Ж — `RELEASE_0.7.0.md` §5 (Ж0–Ж6).
+
+### Что дальше
+
+* Замер Е (0.6.7) у Курьера → ребейз `feat/voice-qwen3` → мерж → тег `v0.7.0` → Замер Ж.
+* 0.7.1-кандидаты: проводка нонвербальных тегов в WS (по итогам Ж1-а), персистенция
+  переключения движка, при тесноте Ж4 — вынос TTS в процесс (`faster-qwen3-tts serve`).
 ## 0.6.7 (23.09.2026) — окно-питомец: драг, углы, персист, глобальные хоткеи, click-through
 
 **Замер Д принят: этап 6 закрыт полностью** (ядро + стекло + полировка): тело фаза 6

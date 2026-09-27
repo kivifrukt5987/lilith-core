@@ -68,14 +68,19 @@ brain:
     history_max_messages: 40                 # сколько последних реплик шлём в контекст
 
   profiles:
-    chat:                         # основная компаньонка: быстрая малышка
-      note: "Qwen3.5-4B/9B (LM Studio), живёт постоянно"
+    chat:                         # основная компаньонка: резидент голосовой сессии
+      note: "ADR-028: Qwen3.6-4B Q4_K_M uncensored (LM Studio :1234) — ~4.5 ГБ с контекстом; 9B с TTS-резидентом в 12 ГБ НЕ соживётся"
       temperature: 0.9
     coder:                        # код и тяжёлые задачи: большая модель или облако
       note: "отдельный инстанс llama.cpp или облачный endpoint"
       base_url: "http://127.0.0.1:1235/v1"
       temperature: 0.2
       max_tokens: 4096
+    gm:                           # РП / ГМ / Сюжет (ADR-028): тяжёлый MoE, свой llama.cpp
+      note: "Qwen3.6-35B MoE / Gemma4-26B MoE Q4_K_M + --n-cpu-moe (квота GPU ≤5 ГБ, эксперты в RAM); говорит через тот же qwen3-резидент"
+      base_url: "http://127.0.0.1:1237/v1"
+      temperature: 0.8
+      max_tokens: 2048
     vision:                       # экран: скриншоты + OCR (инструмент этапа 6)
       note: "Gemma-4-E4B / Qwen3.5-9B (нативный OCR, мультимодальные)"
       base_url: "http://127.0.0.1:1236/v1"
@@ -118,16 +123,45 @@ voice:
   vad_threshold: 0.5            # silero: вероятность речи
   vad_energy_threshold: 0.02    # energy-vad: порог громкости кадра
   push_to_talk_key: "ctrl+space"
-  # ГОРЛО (TTS): профили голосов, у каждого свой бэкенд и тембр
-  tts_enabled: false
+  # ГОРЛО (TTS): 0.7.0 — «одна корона + шкаф платьев» (ADR-027).
+  # Резидент qwen3 (Qwen3-TTS 0.6B-Base через faster-qwen3-tts, extras [voice-qwen])
+  # грузится при старте (~2.5–3.5 ГБ VRAM) и обслуживает ВСЕХ персон: разные души =
+  # разные reference.wav + soul.yaml в personas/<id>/voice/, движок один.
+  # Шкаф платьев (silero/edge/cosyvoice2/fish) — ленивый: переключение ТОЛЬКО явным
+  # действием (панель «🎙 голос» + подтверждение или POST /api/voice/engine),
+  # прежний резидент выгружается. Нет GPU/зависимостей — прогрев честно пропускается,
+  # фолбэк-цепочка (ADR-012) говорит силерой/облаком/моком.
+  tts_enabled: true
+  tts_resident: "qwen3"
   tts_device: "cuda"
   tts_sample_rate: 48000
-  default_voice: "lilith"
+  default_voice: "lilith"        # после усыновления души (voice_preview.py --adopt)
+                                 # Курьер горячо меняет на "lilith-soul" — без перезапуска
   profiles:
-    lilith:                        # повседневный голос
+    lilith-soul:                   # ДУША Лилит (ADR-027): qwen3-клон из design-then-clone
+      backend: "qwen3"
+      reference: "personas/lilith/voice/reference.wav"   # появится после --adopt
+      extra:
+        model: "Qwen/Qwen3-TTS-12Hz-0.6B-Base"           # HF-кэш; локально — models/qwen3-tts/...
+        mode: "clone"
+        ref_text: "personas/lilith/voice/reference.txt"  # точная транскрипция (пишет voice_preview)
+        language: "Russian"
+        chunk_size: 8                                    # 8 шагов ≈ 667 мс аудио на чанк (Ж2)
+      note: "душа из scripts/voice_preview.py; пока reference нет — фолбэк на lilith (silero)"
+    olya-soul:                     # ДУША Оли — тот же механизм, свой reference
+      backend: "qwen3"
+      reference: "personas/olya/voice/reference.wav"
+      extra:
+        model: "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+        mode: "clone"
+        ref_text: "personas/olya/voice/reference.txt"
+        language: "Russian"
+        chunk_size: 8
+      note: "душа Оли из voice_preview.py"
+    lilith:                        # повседневный голос (платье из шкафа)
       backend: "silero"
       voice: "kseniya"
-      note: "основной голос Лили"
+      note: "основной голос Лили до усыновления души; фолбэк qwen3"
     soft:                          # тихий вечерний
       backend: "silero"
       voice: "xeniya"              # поменяй на любимый из silero v4_ru

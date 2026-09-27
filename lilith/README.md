@@ -9,10 +9,10 @@ vLLM, Ollama, OpenRouter).
 
 | | |
 |---|---|
-| Версия | `0.6.7` (**этап 6 закрыт полностью** — замер Д принят: ядро + стекло + полировка; пакет «окно-питомец»: драг за любую точку на Ctrl+Alt, шаги стрелками, **F10** цикл углов, персист позиции, глобальные хоткеи `RegisterHotKey`, **F11** click-through с двойным предохранителем). Предыдущая — `0.6.6` (стекло), серия `0.6.5` (дедлок редактора) |
-| Этап | 6 из 9 (`face-unity`) — ждём сборки Unity у Кирюши и команду «дальше» для этапа 7 |
+| Версия | `0.7.0-voice` (этап «Голос»: резидент Qwen3-TTS-0.6B через faster-qwen3-tts, «шкаф платьев», Voice Design, ADR-027/028; ветка `feat/voice-qwen3`, **ребейз на принятый main `6d0838c` (0.6.7.1, замер Е зелёный) выполнен** — ждёт Замер Ж). Предыдущая — `0.6.7` (окно-питомец), серия `0.6.6` (стекло) |
+| Этап | 6 из 9 (`face-unity`) закрыт полностью; этап «Голос» (апгрейд слоя 4) собран; далее этап 7 «Руки» по команде |
 | Python | 3.11+ |
-| Тесты | **1055 passed, 2 skipped** (pytest), 0 warnings · с tree-sitter — 1057 |
+| Тесты | **1130 passed, 2 skipped** (pytest), 0 warnings · с tree-sitter — 1132 |
 | Unity | **6000.0.x LTS** (у Кирюши 6000.0.84f1) · Built-in RP · UniVRM 0.131.2 · VRM 1.0 |
 | Целевая машина | Windows 11, RTX 3060 12GB, i7-12700KF, 32GB RAM |
 
@@ -25,7 +25,7 @@ vLLM, Ollama, OpenRouter).
 | **1** | **Скелет** | конфиг (YAML + `.env`, pydantic-settings), loguru, FastAPI + uvicorn, WebSocket `/ws` эхо, мини веб-панель | ✅ готово · v0.1.2 |
 | **2** | **Мозг** | `brain/llm.py` — OpenAI-совместимый клиент, реестр профилей, чат-цикл с `persona.md`, стриминг, ток/сек | ✅ готово · v0.2.1 |
 | **3** | **Память** | aiosqlite-журнал, chromadb-RAG (HashEmbedder), саммаризатор с настраиваемым порогом | ✅ готово · v0.3.1 |
-| **4** | **Уши и горло** | `voice/stt.py` (faster-whisper + silero-vad + push-to-talk), `voice/tts.py` (silero/edge/zero-shot), паки моделей | ✅ готово · v0.4.2 |
+| **4** | **Уши и горло** | `voice/stt.py` (faster-whisper + silero-vad + push-to-talk), `voice/tts.py` (silero/edge/zero-shot), паки моделей | ✅ готово · v0.4.2 → **0.7.0 «Голос»**: резидент Qwen3-TTS (`voice/tts_qwen3.py`), шкаф платьев, `voice_preview.py` (ADR-027) |
 | **5** | **Лицо v1→v2** | `face/emotions.py` (парсер `[emotion: X]`), VTuber Studio/VMC-адаптер → затем VRM в панели, виземы, реестр персон | ✅ готово · v0.5.1 |
 | **6** | **Лицо = Unity** | **ПИВОТ**: продюсер `/ws/face/producer` (raw PCM 24 kHz / 2048 Б), персоны v2 (`card`/`voice`/`face.yaml`), LoRA-слот prompt-only, группы `/ws/group`, `unity-client/` (7 C#-скриптов) | ✅ **готово** · v0.6.0 |
 | 6.5 | Память персон | своя область памяти на персону (chroma-коллекции с префиксом, выборка по `memory_scope`) | ⏳ запланировано |
@@ -499,6 +499,21 @@ python scripts\make_test_vrm.py --out personas\lilith\model.vrm --name Lilith
 * **Паки моделей**: `models/packs.yaml` (источник hf/hf-mirror/url/local, size, sha256,
   куда класть) + CLI `lilith-core packs list|install|remove` с докачкой и проверкой хеша.
   Свой пак = новая строка в манифесте. Секция «Паки» в панели приедет на этапе 6.
+
+### 0.7.0 — этап «Голос» (ADR-027/028): резидент Qwen3-TTS + «шкаф платьев»
+
+* **Корона**: движок `qwen3` (Qwen3-TTS-12Hz-0.6B-Base через `faster-qwen3-tts`,
+  `pip install -e .[voice,voice-qwen]`) грузится при старте и обслуживает всех персон:
+  разные души = разные `personas/<id>/voice/reference.wav`, движок один. Нативный стриминг
+  чанками кодека (~667 мс/чанк), TTFA в логе.
+* **Шкаф**: silero/edge/cosyvoice2/fish — ленивые; переодевание только явным действием
+  (панель «🎙 голос» + подтверждение или `POST /api/voice/engine`), прежний резидент
+  выгружается (VRAM для игр и сюжетных LLM).
+* **Душа**: `python scripts/voice_preview.py --persona lilith --count 12 --random-seeds
+  --instruct "описание"` → послушать → `--adopt N --verify-clone` → горячо переключить
+  `default_voice: lilith-soul`. Подробности и маршрут Замера Ж — `RELEASE_0.7.0.md`.
+* **Грабли**: `qwen-tts` (upstream) и `qwen-tts-hf` в одно окружение не ставить (гвард-тест);
+  `torch>=2.5.1` обязателен; веса — авто-загрузка HF (NB 0.7.0 в `models/packs.yaml`).
 * HTTP: `/api/voice/profiles`, `/api/voice/transcribe` (WAV→текст),
   `/api/voice/say` (текст→wav), `/api/packs` (+ install/remove).
 

@@ -38,7 +38,19 @@ memory = ["aiosqlite>=0.20", "chromadb>=0.5"]
 # silero — официальный пакет Silero Team (PyPI `silero`, НЕ `silero-tts`: это чужая
 # обёртка 0.0.5). Тянет torch>=1.12, omegaconf>=2.1, numpy>=1.23. ВАЖНО: модели Silero
 # распространяются под CC BY-NC 4.0 — для домашнего проекта нормально, для коммерции нет.
-voice = ["faster-whisper>=1.0", "pynput>=1.7", "edge-tts>=6.1", "torch>=2.2", "soundfile>=0.12", "numpy>=1.26", "silero>=0.5"]
+# torch>=2.5.1 (0.7.0): нижняя граница поднята с 2.2 — захват CUDA-графов
+# faster-qwen3-tts на torch<=2.5.0 нестабилен ("operation not permitted when stream
+# is capturing"). Драйвер Курьера CUDA 13.2 — дефолтное колесо torch подходит, cu124 не нужен.
+voice = ["faster-whisper>=1.0", "pynput>=1.7", "edge-tts>=6.1", "torch>=2.5.1", "soundfile>=0.12", "numpy>=1.26", "silero>=0.5"]
+# Этап «Голос» (0.7.0, ADR-027) — Qwen3-TTS резидент.
+# Ставим ФОРК faster-qwen3-tts (PyPI): официальный qwen-tts стриминг из Python-API
+# НЕ отдаёт, а realtime-чанки — требование ADR-027. Форк тянет qwen-tts-hf
+# (Transformers 5) — НЕ ставить upstream `qwen-tts` в то же окружение: оба дают
+# пакет qwen_tts (doc форка; гвард-тест test_voice_qwen3.py::test_no_dual_distribution).
+# Windows: только Torch-бэкенд (GGML-колёса qwentts.cpp — macOS/Linux). flash-attn
+# не нужен (SDPA-путь). Веса Qwen3-TTS: Apache-2.0, авто-загрузка из HF (~1.6 ГБ +
+# кодек) — см. NB 0.7.0 в models/packs.yaml.
+voice-qwen = ["faster-qwen3-tts>=0.5.2,<0.6", "torch>=2.5.1", "soundfile>=0.12", "numpy>=1.26"]
 # Этап 5 — лицо
 face = ["websockets>=12.0"]
 # Этап 6 — руки

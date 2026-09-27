@@ -13,6 +13,22 @@
 #   silero-tts:      → pip install lilith-core[voice]   # PyPI `silero` >= 0.5
 #   лицензия:        → CC BY-NC 4.0 (модели Silero) — некоммерческое использование
 #   до установки:    → голосовой путь отдаёт mock-чанк («прык»), это норма (ADR-022)
+# NB (0.7.0, ADR-027): Qwen3-TTS сюда тоже НЕ кладём — и вот почему (урок D5.4:
+# не выдумывать ref/sha256). Веса Qwen3-TTS — это HF-репозитории из НЕСКОЛЬКИХ
+# файлов, наш пак-установщик качает один файл по стабильному URL. Путь qwen3:
+#   1) авто-загрузка: faster-qwen3-tts / qwen_tts сами тянут веса из HF-кэша при
+#      первом прогреве резидента (~1.6 ГБ Qwen3-TTS-12Hz-0.6B-Base + ~1 ГБ кодек
+#      Qwen3-TTS-Tokenizer-12Hz). Интернета на старте достаточно.
+#   2) офлайн-предзагрузка (по желанию, до первого старта):
+#      huggingface-cli download Qwen/Qwen3-TTS-12Hz-0.6B-Base --local-dir models/qwen3-tts/Qwen3-TTS-12Hz-0.6B-Base
+#      huggingface-cli download Qwen/Qwen3-TTS-Tokenizer-12Hz --local-dir models/qwen3-tts/Qwen3-TTS-Tokenizer-12Hz
+#      и в профиле lilith-soul: extra.model: models/qwen3-tts/Qwen3-TTS-12Hz-0.6B-Base
+#   3) 1.7B-VoiceDesign (ТОЛЬКО офлайн-скрипт scripts/voice_preview.py, не резидент):
+#      huggingface-cli download Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign --local-dir models/qwen3-tts/Qwen3-TTS-12Hz-1.7B-VoiceDesign
+#   лицензия:        → Apache-2.0 (код QwenLM/Qwen3-TTS; карту весов сверить на HF
+#                      при первой загрузке — зафиксировать здесь, порядок 0.6.6)
+#   грабли:          → qwen-tts (upstream) и qwen-tts-hf (тянет faster-qwen3-tts)
+#                      в одно окружение НЕ ставить: оба дают пакет qwen_tts
 packs:
   whisper-small:
     type: stt

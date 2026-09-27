@@ -352,6 +352,14 @@ class VoiceSettings(_Section):
     tts_sample_rate: int = Field(default=48000, ge=8000)
     tts_speed: float = Field(default=1.0, gt=0)
     tts_device: str = "cuda"
+    #: Движок-резидент горла (ADR-027, «одна корона»): грузится при старте сервера
+    #: и обслуживает ВСЕ персон (души различаются reference, движок один).
+    #: "qwen3" — Qwen3-TTS 0.6B-Base через faster-qwen3-tts (extras [voice-qwen]);
+    #: "" — короны нет, полностью ленивый режим этапа 4.
+    #: «Шкаф платьев» (silero/edge/cosyvoice2/fish/zero-shot/mock) переключается
+    #: только явным действием: панель «🎙 голос» + подтверждение или
+    #: POST /api/voice/engine — прежний резидент при этом выгружается (VRAM).
+    tts_resident: str = ""
     #: Профиль голоса по умолчанию (ключ voice.profiles).
     default_voice: str = "lilith"
     #: Именованные голоса: backend/voice/reference/speed/note/extra.

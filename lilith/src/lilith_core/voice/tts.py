@@ -4,10 +4,20 @@
 ``stream(text, profile)`` — асинхронный итератор кусков wav по предложениям
 (панель/плеер начинают говорить, не дожидаясь конца реплики).
 
-Бэкенды: silero (дефолт, локально), edge-tts (фолбэк, облако), zero-shot слот
-(IndexTTS/XTTS/CosyVoice/F5 — папка ``voices/<имя>/reference.wav`` + запись в конфиге),
-MockTTS для тестов и песочницы. Горячая замена: профили резолвятся на каждый вызов,
-при ошибке — фолбэк на дефолт (ADR-012).
+0.7.0 (ADR-027, «одна корона + шкаф платьев»): резидентный движок
+``voice.tts_resident`` (qwen3 — Qwen3-TTS 0.6B-Base, voice/tts_qwen3.py)
+обслуживает ВСЕ профили/персон, грузится при старте (``warmup``) и живёт в
+памяти; альтернативы (silero/edge/cosyvoice2/fish/zero-shot/mock) — «шкаф»:
+веса не грузят, пока Курьер явно не переключит движок (панель «🎙 голос» +
+подтверждение → ``TTSRegistry.switch_resident`` — прочие выгружаются через
+``unload()``, VRAM возвращается). Резидент недоступен (нет GPU/зависимостей) —
+фолбэк-цепочка работает как раньше (ADR-012).
+
+Бэкенды: qwen3 (резидент), silero (локально), edge-tts (облако), слоты шкафа
+CosyVoice 2 / Fish Speech (voice/closet.py), zero-shot слот
+(IndexTTS/XTTS/CosyVoice/F5 — папка ``voices/<имя>/reference.wav`` + запись в
+конфиге), MockTTS для тестов и песочницы. Горячая замена: профили резолвятся
+на каждый вызов, при ошибке — фолбэк на дефолт (ADR-012).
 """
 
 from __future__ import annotations
@@ -16,9 +26,10 @@ import asyncio
 import hashlib
 import re
 import struct
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from loguru import logger
 
@@ -66,6 +77,19 @@ class TTSBackend:
     def available(self) -> tuple[bool, str]:
         return False, "не реализован"
 
+    def loaded(self) -> bool:
+        """Веса в памяти? Панель «🎙 голос» и switch_resident смотрят сюда (ADR-027)."""
+        return False
+
+    def unload(self) -> None:
+        """Выгрузить веса / вернуть VRAM (переключение движка, ADR-027).
+
+        Дефолт: нечего выгружать. Обязан быть идемпотентным и не бросаться.
+        """
+
+    async def warmup(self) -> None:
+        """Прогрев при старте сервера (резидент). Дефолт: ничего не делать."""
+
     async def synthesize(self, text: str, profile: VoiceProfile) -> bytes:
         """Полный wav реплики."""
         raise NotImplementedError
@@ -90,6 +114,31 @@ class SileroTTS(TTSBackend):
         if importlib.util.find_spec("torch") is None:
             return False, "torch не установлен (pip install -e .[voice])"
         return True, ""
+
+    def loaded(self) -> bool:
+        return self._model is not None
+
+    def unload(self) -> None:
+        """Отпустить hub-модель (шкаф платьев: silero выгружается при смене короны)."""
+        if self._model is None:
+            return
+        self._model = None
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+        logger.info("TTS silero: выгружена — VRAM возвращён")
+
+    async def warmup(self) -> None:
+        """Прогрев: заранее стянуть hub-веса (дёшево, ~60 МБ)."""
+        ok, reason = self.available()
+        if not ok:
+            logger.info("TTS silero: прогрев пропущен — {}", reason)
+            return
+        await asyncio.to_thread(self._load)
 
     def _load(self) -> Any:
         if self._model is None:
@@ -214,17 +263,29 @@ class MockTTS(TTSBackend):
 
 
 class TTSRegistry:
-    """Реестр горла: профили голосов + бэкенды + горячая замена + фолбэк."""
+    """Реестр горла: профили голосов + бэкенды + резидент + горячая замена + фолбэк.
+
+    ADR-027: ``resident`` — «одна корона». Если задан и доступен, он обслуживает
+    любой профиль (персоны различаются душами-reference, не движками); недоступен —
+    фолбэк-цепочка профиля работает как в этапе 4. ``switch_resident`` — явное
+    переодевание: прочие движки выгружаются (``unload``), VRAM возвращается.
+    """
 
     def __init__(
         self,
         backends: list[TTSBackend],
         profiles: dict[str, VoiceProfile],
         default_profile: str,
+        resident: str = "",
     ) -> None:
         self._backends = {b.name: b for b in backends}
         self.profiles = profiles
         self.default_profile = default_profile if default_profile in profiles else next(iter(profiles))
+        if resident and resident not in self._backends:
+            logger.warning("TTS: резидент '{}' не в реестре ({}) — работаю без короны",
+                           resident, ", ".join(sorted(self._backends)))
+            resident = ""
+        self.resident = resident
 
     def backend_names(self) -> list[str]:
         return sorted(self._backends)
@@ -234,11 +295,11 @@ class TTSRegistry:
         return self.profiles.get(name or self.default_profile, self.profiles[self.default_profile])
 
     def pick_backend(self, profile: VoiceProfile) -> TTSBackend:
-        """Бэкенд профиля с фолбэком: профиль → дефолт-профиль → первый доступный."""
-        chain = [profile.backend, self.profile().backend, *self.backend_names()]
+        """Бэкенд профиля с фолбэком: резидент → профиль → дефолт-профиль → первый доступный."""
+        chain = [self.resident, profile.backend, self.profile().backend, *self.backend_names()]
         seen: set[str] = set()
         for candidate in chain:
-            if candidate in seen:
+            if not candidate or candidate in seen:
                 continue
             seen.add(candidate)
             backend = self._backends.get(candidate)
@@ -246,10 +307,58 @@ class TTSRegistry:
                 continue
             ok, _reason = backend.available()
             if ok:
-                if candidate != profile.backend:
+                if candidate not in (self.resident, profile.backend):
                     logger.warning("TTS: бэкенд '{}' недоступен, фолбэк на '{}'", profile.backend, candidate)
                 return backend
         raise RuntimeError("ни один TTS-бэкенд не доступен: поставь voice-зависимости или используй mock")
+
+    def pick_fallback(self, profile: VoiceProfile, exclude: str) -> TTSBackend | None:
+        """Следующий доступный движок в обход упавшего (ADR-012: фолбэк по ошибке)."""
+        chain = [self.resident, profile.backend, self.profile().backend, *self.backend_names()]
+        seen: set[str] = {exclude}
+        for candidate in chain:
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            backend = self._backends.get(candidate)
+            if backend is not None and backend.available()[0]:
+                return backend
+        return None
+
+    def switch_resident(self, name: str) -> dict[str, Any]:
+        """Явное переодевание (панель «🎙 голос» + подтверждение → POST /api/voice/engine).
+
+        ``name`` = "none"/"" — без короны (полностью ленивый режим этапа 4).
+        Все прочие движки выгружаются: 12 ГБ бережём для игр и сюжетных LLM.
+        """
+        target = "" if name.strip().lower() in ("", "none") else name.strip()
+        if target and target not in self._backends:
+            raise KeyError(f"движок '{target}' не в реестре: {', '.join(self.backend_names())}")
+        unloaded: list[str] = []
+        for backend_name, backend in self._backends.items():
+            if backend_name == target:
+                continue
+            was_loaded = backend.loaded()
+            try:
+                backend.unload()
+            except Exception as exc:  # noqa: BLE001 — выгрузка не должна ломать переодевание
+                logger.warning("TTS: '{}' не выгрузился: {}", backend_name, exc)
+            if was_loaded:
+                unloaded.append(backend_name)
+        self.resident = target
+        ok, reason = self._backends[target].available() if target else (True, "")
+        logger.info("TTS: корона — {} (выгружены: {})", target or "нет", ", ".join(unloaded) or "ничего")
+        return {"resident": target or None, "unloaded": unloaded, "available": ok, "reason": reason or None}
+
+    def engine_info(self) -> dict[str, Any]:
+        """Сводка движков для GET /api/voice/engine и панели."""
+        engines: dict[str, Any] = {}
+        for name in self.backend_names():
+            ok, reason = self._backends[name].available()
+            engines[name] = {
+                "available": ok, "reason": reason or None, "loaded": self._backends[name].loaded()
+            }
+        return {"resident": self.resident or None, "engines": engines}
 
     def describe(self) -> list[dict[str, Any]]:
         """Сводка бэкендов и профилей для /api/voice/profiles."""
@@ -258,6 +367,7 @@ class TTSRegistry:
             for name in self.backend_names()
             for ok, reason in [self._backends[name].available()]
         ]
+        out.append({"kind": "tts-resident", "name": self.resident or None})
         for name, profile in sorted(self.profiles.items()):
             out.append(
                 {

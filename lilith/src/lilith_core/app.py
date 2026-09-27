@@ -121,9 +121,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     face: FaceCore | None = app.state.face
     if face is not None:
         await face.start()
+    # ADR-027: резидент горла (qwen3) прогревается фоном — старт сервера не блокирует.
+    voice: VoiceCore | None = app.state.voice
+    if voice is not None:
+        await voice.start()
 
     yield
 
+    if voice is not None:
+        await voice.stop()
     if face is not None:
         await face.stop()
     if memory is not None:
@@ -471,6 +477,42 @@ def _register_routes(app: FastAPI) -> None:
         except RuntimeError as exc:
             return JSONResponse(status_code=503, content={"status": "error", "detail": str(exc)})
         return Response(content=audio, media_type="audio/wav")
+
+    @app.get("/api/voice/engine", tags=["voice"])
+    async def voice_engine_status() -> Any:
+        """Горло (ADR-027): резидент-«корона» и «шкаф платьев» — кто доступен, кто загружен."""
+        voice: VoiceCore | None = app.state.voice
+        if voice is None:
+            return JSONResponse(status_code=503, content={"status": "disabled"})
+        return voice.engine_status()
+
+    @app.post("/api/voice/engine", tags=["voice"])
+    async def voice_engine_switch(request: Request) -> Any:
+        """Явное переодевание движка (выбор в панели + подтверждение Курьера).
+
+        Прежний резидент и прочие загруженные движки выгружаются — VRAM
+        возвращается играм и сюжетным LLM (ADR-027 п.2). ``name: "none"`` —
+        снять корону совсем (ленивый режим этапа 4).
+        """
+        voice: VoiceCore | None = app.state.voice
+        if voice is None:
+            return JSONResponse(status_code=503, content={"status": "disabled"})
+        try:
+            payload = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse(
+                status_code=400, content={"status": "error", "detail": "нужен JSON {name}"}
+            )
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            return JSONResponse(
+                status_code=400, content={"status": "error", "detail": "пустое имя движка"}
+            )
+        try:
+            info = voice.switch_engine(name)
+        except KeyError as exc:
+            return JSONResponse(status_code=404, content={"status": "error", "detail": str(exc)})
+        return {"status": "ok", "engine": info}
 
     @app.get("/api/packs", tags=["voice"])
     async def packs_list() -> Any:

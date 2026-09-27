@@ -101,7 +101,8 @@ class TestTTSRegistry:
     def test_describe_lists_backends_and_profiles(self) -> None:
         rows = registry().describe()
         kinds = {row["kind"] for row in rows}
-        assert kinds == {"tts", "voice-profile"}
+        # 0.7.0 (ADR-027): describe() дополнительно несёт строку резидента «tts-resident»
+        assert kinds == {"tts", "tts-resident", "voice-profile"}
         names = {row["name"] for row in rows if row["kind"] == "voice-profile"}
         assert names == {"lilith", "clone", "cloud", "mocky"}
         default_row = next(r for r in rows if r["kind"] == "voice-profile" and r["name"] == "lilith")
