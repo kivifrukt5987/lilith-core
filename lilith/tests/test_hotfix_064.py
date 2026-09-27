@@ -694,7 +694,32 @@ class TestOverlayShowsBody:
         assert "Describe()" not in ongui, "OnGUI снова считает текст сам — дрожание вернётся"
 
     def test_overlay_rect_grew(self) -> None:
-        assert "Screen.width - 16, 140" in read_cs(FACE_CLIENT)
+        """Прямоугольник оверлея обязан расти вместе с числом строк.
+
+        0.6.4: гвард был пином ``140`` — «строка про тело влезла». 0.6.7 добавил седьмую
+        строку (состояние окна: угол дока · click-through · глобальные хоткеи), и пин
+        покраснел по делу. Пин заменяем структурным правилом: высота ≥ 140 и не меньше
+        22 px на строку оверлея. Седьмая строка без запаса по высоте = обрезанный текст,
+        который в билде выглядит как «оверлей сломался».
+        """
+        text = read_cs(FACE_CLIENT)
+        match = re.search(r"new Rect\(8, 8, Screen\.width - 16, (\d+)\)", text)
+        assert match, "прямоугольник оверлея не найден (ждали new Rect(8, 8, Screen.width - 16, H))"
+        height = int(match.group(1))
+        assert height >= 140, f"оверлей стал ниже принятого в 0.6.4: {height}"
+
+        # Строки оверлея считаем по переводам строки ВНУТРЬ операторов, которые его
+        # собирают (в C#-строке это два символа: «\» + «n»). Именно операторов, а не
+        # всего блока: в 0.6.7 комментарий рядом упоминает «\n» текстом, и наивный
+        # count() насчитал восьмую строку, которой в оверлее нет.
+        builder = text.split("private void BuildOverlayText()", 1)[1].split("private void OnGUI()", 1)[0]
+        code = [line for line in builder.splitlines() if not line.strip().startswith(("//", "*"))]
+        assert code, "в блоке BuildOverlayText не осталось строк кода"
+        newlines = sum(line.count("\\n") for line in code)
+        assert newlines >= 6, f"в оверлее меньше шести переводов строки: {newlines}"
+        assert height >= 22 * (newlines + 1), (
+            f"высота {height} px мала для {newlines + 1} строк оверлея (нужно ≥ {22 * (newlines + 1)})"
+        )
 
     def test_loaded_event_logs_rig_bind(self) -> None:
         text = read_cs(FACE_CLIENT)

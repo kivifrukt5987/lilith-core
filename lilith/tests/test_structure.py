@@ -470,6 +470,7 @@ class TestStage6UnityFace:
             "unity-client/Assets/LilithFace/Scripts/IdleController.cs",
             "unity-client/Assets/LilithFace/Scripts/VrmLoader.cs",
             "unity-client/Assets/LilithFace/Scripts/TransparentWindow.cs",
+            "unity-client/Assets/LilithFace/Scripts/WindowStateStore.cs",
             "unity-client/Assets/LilithFace/Scripts/FaceRig.cs",
             "unity-client/Assets/LilithFace/Scripts/MiniJson.cs",
             "scripts/unity_face_probe.py",
@@ -484,6 +485,8 @@ class TestStage6UnityFace:
             "RELEASE_0.6.3.md",
             "RELEASE_0.6.4.md",
             "RELEASE_0.6.5.md",
+            "RELEASE_0.6.6.md",
+            "RELEASE_0.6.7.md",
             ".editorconfig",
         ],
     )

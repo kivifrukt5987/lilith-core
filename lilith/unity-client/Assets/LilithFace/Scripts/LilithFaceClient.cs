@@ -35,6 +35,12 @@ namespace Lilith.Face
         [Tooltip("Трансформ-родитель для тела персоны.")]
         public Transform avatarRoot;
 
+        [Tooltip("0.6.7: компонент окна (TransparentWindow) — нужен, чтобы в оверлее была\n"
+                 + "строка «угол дока · click-through · глобальные хоткеи». Если пусто,\n"
+                 + "возьмём с этого же объекта; САМИ не создаём: окно — забота сцены,\n"
+                 + "а лишний TransparentWindow в Editor только путает.")]
+        public TransparentWindow transparentWindow;
+
         [Tooltip("Камера сцены (для взгляда за курсором и прозрачности).")]
         public Camera sceneCamera;
 
@@ -141,6 +147,11 @@ namespace Lilith.Face
             if (vrmLoader == null)
             {
                 vrmLoader = GetComponent<VrmLoader>() ?? gameObject.AddComponent<VrmLoader>();
+            }
+
+            if (transparentWindow == null)
+            {
+                transparentWindow = GetComponent<TransparentWindow>();
             }
 
             vrmLoader.root = avatarRoot != null ? avatarRoot : transform;
@@ -976,6 +987,14 @@ namespace Lilith.Face
                 $"аудио {Audio.BufferedMs} мс · {_audioFrames} чанков · потерь {Audio.ChunksDropped}\n" +
                 $"{Visemes.Describe()}\n{Emotions.Describe()}\n{Idle.Describe()}";
 
+            // 0.6.7: окно-питомец обязан показывать своё состояние глазами, а не только
+            // в Player.log: click-through — режим, в котором окно не ловит клики ВООБЩЕ,
+            // и без строки в оверлее хозяин не поймёт, куда делись его нажатия.
+            if (transparentWindow != null)
+            {
+                text += $"\n{transparentWindow.Describe()}";
+            }
+
             if (!string.IsNullOrEmpty(LastError))
             {
                 text += $"\nошибка: {LastError}";
@@ -1002,7 +1021,7 @@ namespace Lilith.Face
                 return;
             }
 
-            GUI.Label(new Rect(8, 8, Screen.width - 16, 140), _overlayText);
+            GUI.Label(new Rect(8, 8, Screen.width - 16, 192), _overlayText);
         }
 
         // -- вспомогательное ------------------------------------------------------- //

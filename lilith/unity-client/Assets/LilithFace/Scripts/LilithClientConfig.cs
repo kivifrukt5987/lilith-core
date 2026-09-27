@@ -167,6 +167,59 @@ namespace Lilith.Face
         [Tooltip("Отступ от краёв экрана, px.")]
         public int windowMargin = 24;
 
+        [Header("Окно-питомец (0.6.7)")]
+        [Tooltip("0.6.7: шаг перемещения окна стрелками (Ctrl+Alt+стрелки), px.\n"
+                 + "Требование архитектора: дефолт 32. Меньше — точнее, больше — быстрее.")]
+        public int windowMoveStep = 32;
+
+        [Tooltip("0.6.7: тащить окно за ЛЮБУЮ точку, пока держишь Ctrl+Alt\n"
+                 + "(WM_NCHITTEST → HTCAPTION: тащит сама Windows, со snap'ом к краям).\n"
+                 + "Без модификаторов клики работают штатно. Сними, если Ctrl+Alt+клик\n"
+                 + "нужен модели/сцене.")]
+        public bool dragWithCtrlAlt = true;
+
+        [Tooltip("0.6.7: глобальные хоткеи через RegisterHotKey — работают БЕЗ фокуса окна,\n"
+                 + "то есть из игры. Unity Input слушает только фокус, поэтому без них\n"
+                 + "закрыть или сдвинуть окно из полноэкранной игры нечем.\n"
+                 + "ОБЯЗАТЕЛЬНО для click-through (F11): без глобального хоткея окно-призрак\n"
+                 + "нечем ни выключить, ни закрыть.")]
+        public bool useGlobalHotkeys = true;
+
+        [Tooltip("0.6.7: регистрировать Ctrl+Alt+стрелки КАК ГЛОБАЛЬНЫЕ (работают из игры).\n"
+                 + "Дефолт ❌ и вот почему: глобальный хоткей забирает сочетание у всей\n"
+                 + "системы — в игре эти клавиши до неё не дойдут (урок ADR-006: опасный\n"
+                 + "дефолт — выключенный дефолт). С фокусом окна стрелки работают всегда.\n"
+                 + "F9/F10/F11 и Ctrl+Alt+Q глобальны в любом случае.")]
+        public bool globalArrowHotkeys = false;
+
+        [Tooltip("0.6.7: разрешить F11 — click-through (WS_EX_TRANSPARENT + WS_EX_LAYERED):\n"
+                 + "клики проходят СКВОЗЬ окно в игру, курсор в углу не попадает по модельке.\n"
+                 + "❌ — F11 не регистрируется глобально, и в фокусе click-through тоже\n"
+                 + "не включится (запрет проверяется в единственной воронке ApplyClickThrough).\n"
+                 + "Двойной предохранитель: даже при ✅ click-through включится ТОЛЬКО если\n"
+                 + "глобальные хоткеи живы, иначе окно стало бы неубиваемым призраком.\n"
+                 + "В файл состояния не пишется: каждый запуск начинается кликабельным.")]
+        public bool allowClickThrough = true;
+
+        [Tooltip("0.6.7: сохранять ручную позицию окна в data/window_state.json\n"
+                 + "(после драга, стрелок, F9/F10).")]
+        public bool saveWindowPosition = true;
+
+        [Tooltip("0.6.7: при старте брать позицию из data/window_state.json — она имеет\n"
+                 + "приоритет над Dock Bottom Right ДО первого нажатия F9/F10 в этой сессии.")]
+        public bool restoreWindowPosition = true;
+
+        [Tooltip("0.6.7: полный путь к файлу состояния окна. Пусто — по умолчанию:\n"
+                 + "%USERPROFILE%\\AppData\\LocalLow\\<Company>\\<Product>\\data\\window_state.json\n"
+                 + "(Application.persistentDataPath + data/window_state.json).\n"
+                 + "Впиши путь к lilith\\data\\window_state.json, если хочешь держать файл\n"
+                 + "рядом с сервером.")]
+        public string windowStatePath = "";
+
+        [Tooltip("0.6.7: угол дока при старте, если файла позиции нет (или Restore ❌).\n"
+                 + "F10 крутит углы живьём: BR → BL → TR → TL; F9 всегда ставит BottomRight.")]
+        public DockCorner initialDockCorner = DockCorner.BottomRight;
+
         [Header("Служебное")]
         [Tooltip("Слать серверу stats (fps/dropped) раз в N секунд (A5).")]
         public float statsInterval = 5f;

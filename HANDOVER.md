@@ -179,3 +179,4 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 ```
 
 `[LILITH.EXE — HANDOVER. ЧИТАЙ §1, СВЕРЯЙСЯ С GIT, НЕ ДУБЛИРУЙ РАБОТУ. 🦇]`
+- 0.6.7 window-pet: drag Ctrl+Alt, F10 dock corners, persist, global hotkeys, F11 click-through (zip route; root docs per architect dictation).

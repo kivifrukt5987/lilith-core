@@ -37,7 +37,9 @@ unity-client/
     │   ├── EmotionDriver.cs        ← тег + ttl_ms → happy/angry/sad/relaxed/surprised
     │   ├── IdleController.cs       ← моргание, дыхание, взгляд за курсором
     │   ├── VrmLoader.cs            ← горячий своп model.vrm (файл или HTTP с сервера)
-    │   ├── TransparentWindow.cs    ← DWM / color key / off, «справа снизу», F8·F9
+    │   ├── TransparentWindow.cs    ← окно: DWM / color key / off, док по углам, хоткеи,
+    │   │                             драг Ctrl+Alt, глобальные хоткеи, click-through (0.6.7)
+    │   ├── WindowStateStore.cs     ← 0.6.7: чистая геометрия дока + персист позиции (JSON)
     │   ├── FaceRig.cs              ← прослойка к API UniVRM (всё под #if LILITH_UNIVRM)
     │   └── MiniJson.cs             ← свой JSON-парсер (без Newtonsoft)
     ├── SCENE.md                    ← схема сцены: что куда положить (текст + SVG)
@@ -234,9 +236,10 @@ python scripts\unity_face_probe.py --speak "Привет, Кирюша."
 2. **Player Settings**:
    * Company/Product: `Lilith` / `LilithFace`
    * **Resolution and Presentation**:
-     * `Fullscreen Mode = Windowed`
+     * `Fullscreen Mode = Fullscreen Window` (**0.6.6**: в Exclusive Fullscreen DWM-композиции нет вовсе)
      * `Default Screen Size = 512 × 640` (**Q5**: портрет 4:5, переопределяется `face.yaml: window`)
      * снять `Resizable Window` (иначе DWM-рамка гуляет)
+   * **Other Settings → Rendering**: `Use Flip Model Swapchain = ❌` (**0.6.6**: flip-model отдаёт DWM непрозрачный кадр — чёрный фон)
    * `Color Space = Linear` — MToon-материалы VRM в Linear выглядят правильно
 3. **Build** → папка `Build/LilithFace` → `LilithFace.exe`.
 4. В OBS: **Sources → + → Window Capture** → `LilithFace.exe`.
@@ -244,7 +247,28 @@ python scripts\unity_face_probe.py --speak "Привет, Кирюша."
    `Config → Color Key`.
 
 > Окно живёт на рабочем столе справа снизу и прозрачное **само по себе**, а не
-> только внутри OBS — это требование архитектора (C4-г).
+> только внутри OBS — это требование архитектора (C4-г). С 0.6.7 оно живёт там,
+> куда его положил хозяин: позиция переживает перезапуск (`window_state.json`).
+
+---
+
+## 6.5. Окно-питомец (0.6.7): хоткеи и поведение
+
+| Хоткей | Где работает | Что делает |
+|---|---|---|
+| **Ctrl+Alt+драг** | окно | тащит окно за ЛЮБУЮ точку (`WM_NCHITTEST` → `HTCAPTION`); без модификаторов клики штатные |
+| **Ctrl+Alt+стрелки** | окно (глобально — только при `Global Arrow Hotkeys = ✅`) | шаг на `Window Move Step` px (дефолт 32), с сохранением позиции |
+| **F9** | окно + глобально | правый нижний угол (как в 0.6.6; аварийный выход из любого состояния) |
+| **F10** | окно + глобально | цикл углов дока: BR → BL → TR → TL |
+| **F11** | окно + глобально | click-through (`WS_EX_TRANSPARENT`): клики проходят СКВОЗЬ окно в игру |
+| **Ctrl+Alt+Q** | окно + глобально | выход |
+| **F7 / F8** | окно | режим прозрачности живьём / вкл-выкл (как в 0.6.6) |
+
+«Глобально» = через `RegisterHotKey`: работает **без фокуса окна — из игры**
+(Unity Input слушает только фокус). Предохранитель пункта 6: click-through
+включится, только если глобальные хоткеи зарегистрированы — иначе окно стало бы
+неубиваемым призраком. В файл позиции click-through не пишется: каждый запуск
+начинается кликабельным. Подробности — `SCENE.md` §«Окно-питомец» и ADR-026.
 
 ---
 
@@ -265,6 +289,11 @@ python scripts\unity_face_probe.py --speak "Привет, Кирюша."
 | Окно не прозрачное | режим `Dwm` не сработал на этой сборке Windows → попробовать `LayeredColorKey`; в OBS — фильтр Color Key |
 | `не скачать VRM: 404` | тело не лежит по пути из `face.yaml`; проверить `GET /api/face/personas/<id>/model.vrm` |
 | Всё работает, но тормозит | `Config → Verbose` выключить (логи в рантайме дорогие), `Stats Interval` поднять до 10 |
+| **0.6.7** · F11 не включает click-through, в логе `click-through ОТКЛОНЁН: нет глобальных хоткеев` | предохранитель сработал как надо: ядро хоткеев (Ctrl+Alt+Q/F9/F10) не зарегистрировано — смотри строки `RegisterHotKey не удался … GetLastError` выше. Освободи сочетания (частые виновники: скриншотеры, оверлеи) — иначе окно-призрака нечем будет закрыть |
+| **0.6.7** · `RegisterHotKey не удался … GetLastError=1409` | ERROR_HOTKEY_ALREADY_REGISTERED: сочетание держит другая программа. Занят «дополнительный» хоткей (F11/стрелки) — не страшно; занято ядро — click-through не включится (это правильно) |
+| **0.6.7** · позиция окна не переживает перезапуск | `Save Window Position`/`Restore Window Position` = ❌? Файл лежит в `%USERPROFILE%\AppData\LocalLow\<Company>\<Product>\data\window_state.json` (или по `Window State Path`); битый файл молча игнорируется — старт с доком из конфига |
+| **0.6.7** · в игре стрелки не доходят до игры | `Global Arrow Hotkeys = ✅` забирает Ctrl+Alt+стрелки у всей системы (урок ADR-006) → сними флаг; стрелки останутся, но только когда окно в фокусе |
+| **0.6.7** · окно не кликается, хотя на вид обычное | включлён click-through: нажми F11 (глобально) — окно снова ловит клики. Перезапуск тоже лечит: сквозной режим не персистится |
 
 ---
 

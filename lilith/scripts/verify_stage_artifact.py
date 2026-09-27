@@ -65,6 +65,7 @@ REQUIRED_STAGE6 = (
     "unity-client/Assets/LilithFace/Scripts/IdleController.cs",
     "unity-client/Assets/LilithFace/Scripts/VrmLoader.cs",
     "unity-client/Assets/LilithFace/Scripts/TransparentWindow.cs",
+    "unity-client/Assets/LilithFace/Scripts/WindowStateStore.cs",
 )
 
 #: Что в архиве появиться не должно.

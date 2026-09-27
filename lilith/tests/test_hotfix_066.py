@@ -528,10 +528,25 @@ class TestWin32Discipline:
             "windowToolWindow не выбирает между TOOLWINDOW и APPWINDOW"
         )
 
-    def test_transparency_applied_only_from_apply(self):
-        """``ApplyTransparency`` зовётся из ``Apply()`` (и больше ниоткуда)."""
-        text = "\n".join(code_lines(read(TRANSPARENT_WINDOW)))
-        assert text.count("ApplyTransparency(mode)") == 1, "ApplyTransparency вызывается не один раз"
+    def test_transparency_applied_only_on_state_change(self):
+        """``ApplyTransparency`` зовётся только по изменению состояния окна.
+
+        0.6.6: вызов ровно один — из ``Apply()`` (смена режима, F7/F8).
+        0.6.7: добавился второй законный повод — снятие click-through в режимах без
+        цветового ключа (WS_EX_LAYERED снимается, стекло надо вернуть). Ровно два вызова,
+        оба по изменению состояния, и **ни одного** в ``Update()``/``WndProc`` —
+        иначе рябь и «метание» окна возвращаются.
+        """
+        text = read(TRANSPARENT_WINDOW)
+        calls = [line for line in code_lines(text)
+                 if "ApplyTransparency(" in line and "private void ApplyTransparency" not in line]
+        assert len(calls) == 2, f"вызовов ApplyTransparency {len(calls)} (ждали 2): {calls}"
+        assert "ApplyTransparency(mode)" in block_of(text, "public void Apply()")
+        assert "ApplyTransparency(mode)" in block_of(text, "private void ApplyClickThrough")
+        for signature in ("private void Update()", "private IntPtr WndProc"):
+            assert "ApplyTransparency(" not in block_of(text, signature), (
+                f"{signature}: прозрачность применяется не по изменению состояния"
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -565,15 +580,33 @@ class TestWindowConfig:
         assert "WS_CAPTION | WS_THICKFRAME" in block, "рамка не возвращается стилями"
 
     def test_close_hotkey_needs_ctrl_alt_and_quits(self):
-        """Ctrl+Alt+Q: оба модификатора обязательны, действие — ``Application.Quit()``."""
-        update = block_of(read(TRANSPARENT_WINDOW), "private void Update()")
+        """Ctrl+Alt+Q: оба модификатора обязательны, действие — выход из приложения.
+
+        0.6.7: ``Application.Quit()`` уехал из ``Update()`` в ``RequestQuit()``, потому что
+        выход теперь запускается из двух мест — опросом Input в окне с фокусом **и**
+        глобальным хоткеем без фокуса (пункт 5 пожеланий). Гвард стал строже: он требует,
+        чтобы Quit жил именно в ``RequestQuit``, чтобы лог был там же, и чтобы из оконной
+        процедуры Quit НЕ вызывался (Unity API из чужого такта — урок 0.6.5).
+        """
+        text = read(TRANSPARENT_WINDOW)
+        update = block_of(text, "private void Update()")
         assert "config.closeHotkeyEnabled" in update
         assert "KeyCode.LeftControl" in update and "KeyCode.RightControl" in update
         assert "KeyCode.LeftAlt" in update and "KeyCode.RightAlt" in update
         assert "Input.GetKeyDown(config.closeHotkey)" in update
-        quit_statement = statement_of(update, "Application.Quit()")
-        assert "Application.Quit()" in quit_statement
-        assert_logged(update, "хоткей закрытия", "лог закрытия по хоткею")
+        assert "RequestQuit()" in update, "Ctrl+Alt+Q больше не ведёт к выходу"
+
+        request_quit = block_of(text, "private void RequestQuit()")
+        assert "Application.Quit()" in request_quit
+        assert_logged(request_quit, "хоткей закрытия", "лог закрытия по хоткею")
+
+        wndproc = block_of(text, "private IntPtr WndProc")
+        assert "Application.Quit()" not in wndproc, (
+            "Quit из оконной процедуры: сообщение приходит вне кадра Unity"
+        )
+        assert "Application.Quit(" not in block_of(text, "private void OnGlobalHotkey"), (
+            "Quit из WM_HOTKEY напрямую — только флаг/очередь и разбор в Update"
+        )
 
     def test_hotkeys_documented_in_scene(self):
         scene = read(SCENE_MD)
@@ -733,7 +766,10 @@ class TestReleaseShape:
         import lilith_core  # noqa: PLC0415
 
         assert re.match(r"^\d+\.\d+\.\d+$", lilith_core.__version__)
-        assert lilith_core.__version__ == "0.6.6"
+        # 0.6.7: пин ``== "0.6.6"`` краснел бы на каждом следующем релизе, хотя намерение
+        # гварда — «версия поднята и трёхчастная» (тот же урок, что в 0.6.5/0.6.6).
+        version = tuple(int(part) for part in lilith_core.__version__.split("."))
+        assert version >= (0, 6, 6)
 
     def test_changelog_has_the_entry(self):
         changelog = read(PROJECT_ROOT / "CHANGELOG.md")
