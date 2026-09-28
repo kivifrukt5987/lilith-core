@@ -256,7 +256,7 @@ namespace Lilith.Face
             }
 
             var version = FindInt(json, "version");
-            if (version != CurrentVersion)
+            if (version != WindowState.CurrentVersion)
             {
                 // Чужая версия схемы: не угадываем смысл полей, начинаем с чистого листа.
                 return null;

@@ -1214,7 +1214,7 @@ namespace Lilith.Face
             // Хоткеи, которые дублируются глобальными, опрашиваем ТОЛЬКО при фокусе:
             // глобальный хоткей Windows и так не пускает клавишу в приложение, а двойной
             // опрос дал бы два срабатывания на одно нажатие (F11 щёлкал бы туда-сюда).
-            var focused = Application.hasFocus;
+            var focused = Application.isFocused;
 
             if (focused && Input.GetKeyDown(KeyCode.F9) && !HandledGloballyRecently(HotkeyAction.DockBottomRight))
             {
@@ -1310,7 +1310,9 @@ namespace Lilith.Face
             }
 
             _saveRequested = false;
+            #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
             SavePositionNow("конец перетаскивания/изменения размера");
+            #endif
         }
 
         /// <summary>Одно действие хоткея. Отдельным методом — чтобы его видели гварды и оверлей.</summary>
