@@ -604,7 +604,7 @@ def guard_parse_is_defensive(text: str) -> None:
     parse = expr(block_of(text, "public static WindowState Parse"))
     # NB: mask_literals гасит содержимое символьных литералов: '{' → ''
     assert "if(string.IsNullOrEmpty(json)||json.IndexOf('')<0){returnnull;}" in parse
-    assert "if(version!=CurrentVersion){returnnull;}" in parse, (
+    assert "if(version!=WindowState.CurrentVersion){returnnull;}" in parse, (
         "чужая версия схемы не угадывается — начинаем с чистого листа"
     )
     assert "if(x==int.MinValue||y==int.MinValue){returnnull;}" in parse, (
@@ -666,7 +666,7 @@ class TestPersistence:
         guard_parse_is_defensive(WS)
 
     def test_control_shot_parse_trusts_any_version(self):
-        broken = mutant(WS, "            if (version != CurrentVersion)",
+        broken = mutant(WS, "            if (version != WindowState.CurrentVersion)",
                         "            if (false)")
         with pytest.raises(AssertionError):
             guard_parse_is_defensive(broken)
@@ -830,7 +830,7 @@ def guard_no_double_fire(text: str) -> None:
     assert update.count("!HandledGloballyRecently(HotkeyAction.") == 8, (
         "все 8 Input-веток (F9, F10, F11, 4 стрелки, выход) защищены дедупликацией"
     )
-    assert "varfocused=Application.hasFocus;" in update
+    assert "varfocused=Application.isFocused;" in update
 
 
 def guard_unregister_on_destroy(text: str) -> None:
