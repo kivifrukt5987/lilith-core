@@ -12,7 +12,7 @@ vLLM, Ollama, OpenRouter).
 | Версия | `0.7.0-voice` (этап «Голос»: резидент Qwen3-TTS-0.6B через faster-qwen3-tts, «шкаф платьев», Voice Design, ADR-027/028; ветка `feat/voice-qwen3`, **ребейз на принятый main `6d0838c` (0.6.7.1, замер Е зелёный) выполнен** — ждёт Замер Ж). Предыдущая — `0.6.7` (окно-питомец), серия `0.6.6` (стекло) |
 | Этап | 6 из 9 (`face-unity`) закрыт полностью; этап «Голос» (апгрейд слоя 4) собран; далее этап 7 «Руки» по команде |
 | Python | 3.11+ |
-| Тесты | **1130 passed, 2 skipped** (pytest), 0 warnings · с tree-sitter — 1132 |
+| Тесты | **1145 passed, 2 skipped** (pytest), 0 warnings · с tree-sitter — 1147 |
 | Unity | **6000.0.x LTS** (у Кирюши 6000.0.84f1) · Built-in RP · UniVRM 0.131.2 · VRM 1.0 |
 | Целевая машина | Windows 11, RTX 3060 12GB, i7-12700KF, 32GB RAM |
 
@@ -512,6 +512,10 @@ python scripts\make_test_vrm.py --out personas\lilith\model.vrm --name Lilith
 * **Душа**: `python scripts/voice_preview.py --persona lilith --count 12 --random-seeds
   --instruct "описание"` → послушать → `--adopt N --verify-clone` → горячо переключить
   `default_voice: lilith-soul`. Подробности и маршрут Замера Ж — `RELEASE_0.7.0.md`.
+* **Bake-off короны (поправка ADR-027 от 28.09)**: Qwen3-TTS для RU забракован полем
+  (остался в шкафу как JP-генератор); нового резидента выбирает слепое прослушивание —
+  `scripts/voice_bakeoff.py` (CosyVoice 3 / Fish S2 / XTTS v2 / qwen3-контроль),
+  установка кандидатов и маршруты — `RELEASE_0.7.0.md` §8.
 * **Грабли**: `qwen-tts` (upstream) и `qwen-tts-hf` в одно окружение не ставить (гвард-тест);
   `torch>=2.5.1` обязателен; веса — авто-загрузка HF (NB 0.7.0 в `models/packs.yaml`).
 * HTTP: `/api/voice/profiles`, `/api/voice/transcribe` (WAV→текст),

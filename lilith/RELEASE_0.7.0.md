@@ -158,4 +158,57 @@ python scripts\voice_preview.py --persona lilith --adopt N --verify-clone
 * В песочнице Строителя 8 skipped (нет tree-sitter и артефакта 0.6.0) — на машине Курьера
   ожидается штатные 2 skipped.
 
+## 8. Bake-off RU-короны (поправка ADR-027 от 28.09.2026)
+
+Полевой вердикт принят: Qwen3-TTS для русского — не корона (RU-просодия плоская,
+ударения ошибочные; Ж0-цифры: RTF 2.09, TTFA 403 мс, VRAM-пик 5.2 ГБ — латентность
+в норме, брак в качестве). qwen3 остаётся в шкафу как генератор JP-датасета.
+Корону выбирает **слепое прослушивание** (Q-B): `scripts/voice_bakeoff.py`.
+
+### 8.1 Подготовка (один раз)
+
+Референс: положить `voices/bakeoff/LilithGolos.wav` (JP, ~8–9 с, чистый) и рядом
+`LilithGolos.txt` — **точную JP-транскрипцию** (без неё cosyvoice3/fish честно
+скипнутся, qwen3 уйдёт в xvec_only, xtts отработает).
+
+### 8.2 Кандидаты и их окружения
+
+| Кандидат | Окружение | Установка |
+|---|---|---|
+| **qwen3** (контроль) | основное | уже стоит (`[voice-qwen]`) |
+| **xtts** (референс Нейроны) | основное | `pip install coqui-tts` (веса ~1.8 ГБ стянет сам) |
+| **cosyvoice3** | отдельное conda py3.10 | `git clone --recursive https://github.com/FunAudioLLM/CosyVoice` → `conda create -n cosyvoice python=3.10` → `pip install -r requirements.txt` → веса: `huggingface-cli download FunAudioLLM/Fun-CosyVoice3-0.5B-2512 --local-dir pretrained_models/Fun-CosyVoice3-0.5B` |
+| **fish** (S2) | отдельный чекаут | `git clone https://github.com/fishaudio/fish-speech` → `pip install -e .` → `hf download fishaudio/s2-pro --local-dir checkpoints/s2-pro`. ⚠️ их дока: **≥24 ГБ VRAM** — на 3060 12 ГБ только с `--fish-half` и без гарантий; OOM → статус failed в манифесте, bake-off продолжится. Лицензия — Fish Audio Research License (читать до установки!) |
+
+### 8.3 Прогоны (LLM/Unity/браузер выключены; по движку за раз — VRAM)
+
+```bat
+:: основное окружение, общий run-dir:
+python scripts\voice_bakeoff.py --engine qwen3 --run-dir voices\bakeoff\run1
+python scripts\voice_bakeoff.py --engine xtts   --run-dir voices\bakeoff\run1
+:: conda-окружение CosyVoice (тот же run-dir — манифест дополняется):
+conda activate cosyvoice
+python E:\lilith-core\lilith\scripts\voice_bakeoff.py --engine cosyvoice3 ^
+  --run-dir E:\lilith-core\lilith\voices\bakeoff\run1 ^
+  --cosyvoice-repo <путь>\CosyVoice --cosyvoice-model pretrained_models/Fun-CosyVoice3-0.5B ^
+  --ref E:\lilith-core\lilith\voices\bakeoff\LilithGolos.wav
+:: fish — в их чекауте (если решено пробовать на 12 ГБ):
+python <путь>\voice_bakeoff.py --engine fish --run-dir ...\run1 ^
+  --fish-repo <путь>\fish-speech --fish-half --ref ...\LilithGolos.wav
+:: слепая раскладка (после всех прогонов, в любом окружении):
+python scripts\voice_bakeoff.py --blind-only --run-dir voices\bakeoff\run1
+```
+
+### 8.4 Прослушивание и вердикт
+
+* Архитектор слушает `run1/blind/B##.wav`, ставит оценки (таблица: код × фраза × 1–5),
+  **blind_key.yaml до конца оценок не открывать**.
+* Цифры (RTF, VRAM-пики, статусы) — в `run1/manifest.yaml`; `nvidia-smi`-пик по каждому
+  прогону Курьер дописывает от руки (в манифесте — только in-process torch-статы).
+* Вердикт + manifest + ключ → Строителю: ревизия ADR-027 (корона = победитель),
+  реализация бэкенда в слот `voice/closet.py`, `switch_engine` на корону, Ж2–Ж6.
+* RVC (Q-C) — вторая очередь: если победитель «плывёт» по тембру, пост-фильтр поверх.
+
+---
+
 *— Лилька-строитель, 27.09.2026. Одна корона, шкаф платьев, бюджет соблюдён. 🦇*
