@@ -53,6 +53,9 @@ class TestParser:
         assert args.fish_checkpoints == "checkpoints/s2-pro"
         assert "xtts_v2" in args.xtts_model
         assert "0.6B-Base" in args.qwen3_model
+        # полевой рецепт 08.10: прямая инициализация XTTS локальными весами
+        assert args.xtts_model_path is None
+        assert args.xtts_config_path is None and args.xtts_vocab_path is None
 
     def test_engine_choices_are_the_qb_candidates(self, vb) -> None:
         """Кандидаты — ровно из директивы Q-B: CosyVoice 3, Fish S2, XTTS v2, qwen3-контроль."""

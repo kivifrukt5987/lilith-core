@@ -119,6 +119,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fish-half", action="store_true",
                    help="--half для text2semantic (GPU без bf16 / мало VRAM)")
     p.add_argument("--xtts-model", default="tts_models/multilingual/multi-dataset/xtts_v2")
+    p.add_argument("--xtts-model-path", default=None,
+                   help="прямая инициализация весов XTTS (полевой рецепт 08.10: легаси-"
+                        "загрузчик игнорирует HF_ENDPOINT, R2/CDN мёртв) — путь к model.pth")
+    p.add_argument("--xtts-config-path", default=None, help="config.json к --xtts-model-path")
+    p.add_argument("--xtts-vocab-path", default=None, help="vocab.json к --xtts-model-path")
     p.add_argument("--qwen3-model", default="Qwen/Qwen3-TTS-12Hz-0.6B-Base")
     return p
 
@@ -254,8 +259,21 @@ def bake_xtts(ctx: BakeContext) -> None:
     except ImportError:
         pass
     _vram_peak_gb(reset=True)
-    _log(f"xtts: загружаю {ctx.args.xtts_model} на {device}...")
-    tts = Tts(ctx.args.xtts_model).to(device)
+    if ctx.args.xtts_model_path:
+        # Полевой рецепт 08.10 (RELEASE §9.4): легаси-загрузчик TTS по имени модели
+        # ходит в us.aws.cdn.hf.co и игнорирует HF_ENDPOINT — на мёртвом CDN падает.
+        # Обход: прямая инициализация локальными весами. speakers.json не нужен
+        # (клон через speaker_wav), пустой {} допустим.
+        init_kwargs: dict[str, Any] = {"model_path": ctx.args.xtts_model_path}
+        if ctx.args.xtts_config_path:
+            init_kwargs["config_path"] = ctx.args.xtts_config_path
+        if ctx.args.xtts_vocab_path:
+            init_kwargs["vocab_path"] = ctx.args.xtts_vocab_path
+        _log(f"xtts: прямая инициализация {init_kwargs} на {device}...")
+        tts = Tts(**init_kwargs).to(device)
+    else:
+        _log(f"xtts: загружаю {ctx.args.xtts_model} на {device}...")
+        tts = Tts(ctx.args.xtts_model).to(device)
     for pid, text in ctx.phrases:
         out = ctx.run_dir / f"xtts_{pid}.wav"
         t0 = time.perf_counter()
@@ -268,9 +286,12 @@ def bake_xtts(ctx: BakeContext) -> None:
                           "gen_sec": round(gen, 2),
                           "rtf": round(dur / gen, 2) if dur and gen else None})
         _log(f"xtts/{pid}: {gen:.1f}с генерация")
-    ctx.engines["xtts"] = {"status": "ok", "note": f"model={ctx.args.xtts_model}, device={device}",
-                           "pkg": _package_version("coqui-tts") or _package_version("TTS"),
-                           "vram_peak_gb": _vram_peak_gb()}
+    ctx.engines["xtts"] = {
+        "status": "ok",
+        "note": f"model={ctx.args.xtts_model_path or ctx.args.xtts_model}, device={device}",
+        "pkg": _package_version("coqui-tts") or _package_version("TTS"),
+        "vram_peak_gb": _vram_peak_gb(),
+    }
 
 
 def bake_cosyvoice3(ctx: BakeContext) -> None:
