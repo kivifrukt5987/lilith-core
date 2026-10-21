@@ -230,6 +230,10 @@ class BrainSettings(_Section):
     #: Имя переменной окружения с общим запасным ключом.
     api_key_env: str = "LILITH_BRAIN_API_KEY"
     system_prompt_extra: str = ""
+    #: Стриппер служебных токенов каналов (`<|channel|>thought…`, `<|end|>` и т.п.):
+    #: LM Studio не парсит канальный протокол Qwen3.x и отдаёт разметку сырьём в
+    #: content — пользователь не должен видеть thought-поток (дефект-лист 21.10 п.5).
+    strip_channel_tokens: bool = True
 
     @model_validator(mode="after")
     def _validate_profiles(self) -> "BrainSettings":
@@ -360,6 +364,19 @@ class VoiceSettings(_Section):
     #: только явным действием: панель «🎙 голос» + подтверждение или
     #: POST /api/voice/engine — прежний резидент при этом выгружается (VRAM).
     tts_resident: str = ""
+    #: Явный путь/ID модели резидента (дефект-лист 21.10 п.1). Приоритет прогрева:
+    #: этот ключ > extra.model первого qwen3-профиля > дефолт движка. Локальная
+    #: папка грузится ОФЛАЙН (HF_HUB_OFFLINE=1) — сеть не дёргается вовсе.
+    tts_resident_model_path: str = ""
+    #: Разрешить движку горла качать веса из сети (HF). Дефолт НЕТ: за стеной
+    #: закачка превращается в петлю ретраев — вместо неё честная ошибка с рецептом
+    #: (дефект-лист 21.10 п.1: offline-first). Для первой загрузки — включить явно.
+    tts_allow_download: bool = False
+    #: Облачные бэкенды (edge): TCP-healthcheck с таймаутом — за стеной бэкенд
+    #: честно помечается недоступным, фолбэк-цепочка пропускает его молча,
+    #: без длинных трейсов (дефект-лист 21.10 п.2). Результат кэшируется.
+    cloud_healthcheck: bool = True
+    cloud_healthcheck_timeout_sec: float = Field(default=2.5, gt=0, le=10)
     #: Профиль голоса по умолчанию (ключ voice.profiles).
     default_voice: str = "lilith"
     #: Именованные голоса: backend/voice/reference/speed/note/extra.

@@ -133,6 +133,11 @@ voice:
   # фолбэк-цепочка (ADR-012) говорит силерой/облаком/моком.
   tts_enabled: true
   tts_resident: "qwen3"
+  # Дефект-лист 21.10 п.1 (ADR-029): ЯВНЫЙ путь модели резидента — offline-first,
+  # приоритет над сканом профилей. Локальная папка → загрузка БЕЗ сети
+  # (HF_HUB_OFFLINE=1); весов нет → честная ошибка с рецептом, не петля закачки.
+  tts_resident_model_path: "E:/models/qwen3-tts-06b"
+  tts_allow_download: false       # true — разово разрешить закачку весов из HF
   tts_device: "cuda"
   tts_sample_rate: 48000
   default_voice: "lilith-soul"        # после усыновления души (voice_preview.py --adopt)

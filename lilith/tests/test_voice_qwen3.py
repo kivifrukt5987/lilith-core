@@ -216,9 +216,15 @@ class TestUnloadWarmup:
         backend.unload()  # идемпотентно
 
     @pytest.mark.asyncio
-    async def test_warmup_skips_gracefully_without_gpu(self) -> None:
-        """Нет CUDA/пакета — warmup логирует пропуск и НЕ бросается (старт сервера жив)."""
-        await Qwen3TTS().warmup()  # не должно raising
+    async def test_warmup_skips_gracefully_without_gpu(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Недоступный резидент: warmup логирует пропуск и НЕ бросается (старт сервера жив).
+
+        Герметично: available() принудительно False — на живой GPU-машине тест
+        не должен грузить настоящую модель (5 ГБ VRAM и минута времени).
+        """
+        backend = Qwen3TTS()
+        monkeypatch.setattr(backend, "available", lambda: (False, "тест: GPU/пакет отсутствуют"))
+        await backend.warmup()  # не должно raising
 
     @pytest.mark.asyncio
     async def test_warmup_loads_when_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -391,8 +397,15 @@ class TestVoiceCoreFallback:
             async for _ in core.stream("текст", "mid"):
                 pass
 
-    async def test_start_stop_with_dead_resident(self, voice_settings) -> None:
-        """Мёртвый резидент (нет GPU/пакета) не роняет ни старт, ни остановку."""
+    async def test_start_stop_with_dead_resident(self, voice_settings, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Мёртвый резидент (нет GPU/пакета) не роняет ни старт, ни остановку.
+
+        Герметично: available() qwen3 принудительно False — на живой машине
+        тест не качает и не грузит веса.
+        """
+        monkeypatch.setattr(
+            Qwen3TTS, "available", lambda self: (False, "тест: резидент мёртв")
+        )
         voice_settings.voice.tts_resident = "qwen3"
         core = VoiceCore(voice_settings)
         await core.start()

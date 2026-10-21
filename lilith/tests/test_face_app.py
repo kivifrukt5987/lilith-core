@@ -107,3 +107,7 @@ class TestFaceEndpoints:
         with TestClient(app) as client:
             assert client.get("/api/face/state").status_code == 503
             assert client.post("/api/face/emotion", json={"name": "joy"}).status_code == 503
+
+# Дефект-лист 21.10 п.4: WS-тесты на Windows asyncio могут висеть вечно —
+# жёсткий лимит на модуль (pytest-timeout; без плагина маркер инертен, ini его знает).
+pytestmark = pytest.mark.timeout(90)

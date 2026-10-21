@@ -161,3 +161,7 @@ class TestMemoryInBus:
 
         state = memory_client.get("/api/memory/state").json()
         assert state["journal"]["messages"] == 4  # по две строки на каждый ход
+
+# Дефект-лист 21.10 п.4: WS-тесты на Windows asyncio могут висеть вечно —
+# жёсткий лимит на модуль (pytest-timeout; без плагина маркер инертен, ini его знает).
+pytestmark = pytest.mark.timeout(90)

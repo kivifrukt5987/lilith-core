@@ -50,6 +50,19 @@ def _isolate_loguru() -> Iterator[None]:
     shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+@pytest.fixture(autouse=True)
+def _offline_voice_backends(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Дефект-лист 21.10 п.3: тесты НЕ ходят в сеть (офлайн-мок-пак).
+
+    ``LILITH_VOICE_OFFLINE=1`` честно выключает сетевые бэкенды (silero-tts/vad —
+    torch.hub, edge-tts — облако, faster-whisper — докачка весов): фолбэк-цепочки
+    падают в mock детерминированно, на любой машине — с torch/за стеной или без.
+    Юнит-тесты самой логики available() сносят переменную сами (delenv).
+    """
+    monkeypatch.setenv("LILITH_VOICE_OFFLINE", "1")
+    yield
+
+
 @pytest.fixture
 def tmp_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Временная «рабочая директория проекта» с конфигом и .env."""

@@ -908,3 +908,7 @@ class TestNoForeignScripts:
     def test_face_rig_keeps_japanese_blendshapes(self) -> None:
         """А вот в FaceRig японские имена морфов — легальны (их ждёт VRoid)."""
         assert "笑い" in read_cs(SCRIPTS_DIR / "FaceRig.cs")
+
+# Дефект-лист 21.10 п.4: WS-тесты на Windows asyncio могут висеть вечно —
+# жёсткий лимит на модуль (pytest-timeout; без плагина маркер инертен, ini его знает).
+pytestmark = pytest.mark.timeout(90)

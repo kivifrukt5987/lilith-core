@@ -221,3 +221,7 @@ class TestUnityAdapter:
                         producer_types.add(frame["type"])
             assert "audio" in legacy_kinds and "viseme" in legacy_kinds
             assert "audio" in producer_types and "done" in producer_types
+
+# Дефект-лист 21.10 п.4: WS-тесты на Windows asyncio могут висеть вечно —
+# жёсткий лимит на модуль (pytest-timeout; без плагина маркер инертен, ini его знает).
+pytestmark = pytest.mark.timeout(90)

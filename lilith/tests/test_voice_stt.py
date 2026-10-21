@@ -79,7 +79,9 @@ class TestEnergyVAD:
 class TestBackendsAvailability:
     """Доступность бэкендов в песочнице и резервные слоты."""
 
-    def test_faster_whisper_reports_reason(self) -> None:
+    def test_faster_whisper_reports_reason(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # сырая логика доступности: сносим офлайн-рубильник общей фикстуры conftest
+        monkeypatch.delenv("LILITH_VOICE_OFFLINE", raising=False)
         ok, reason = FasterWhisperSTT().available()
         import importlib.util
 

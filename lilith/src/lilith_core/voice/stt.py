@@ -72,7 +72,10 @@ class FasterWhisperSTT(STTBackend):
 
     def available(self) -> tuple[bool, str]:
         import importlib.util
+        import os
 
+        if os.environ.get("LILITH_VOICE_OFFLINE") == "1":
+            return False, "LILITH_VOICE_OFFLINE=1: сетевые бэкенды выключены (стена/тесты)"
         if importlib.util.find_spec("faster_whisper") is None:
             return False, "faster-whisper не установлен (pip install -e .[voice])"
         return True, ""
@@ -247,7 +250,10 @@ class SileroVAD(VAD):
 
     def available(self) -> tuple[bool, str]:
         import importlib.util
+        import os
 
+        if os.environ.get("LILITH_VOICE_OFFLINE") == "1":
+            return False, "LILITH_VOICE_OFFLINE=1: сетевые бэкенды выключены (стена/тесты)"
         if importlib.util.find_spec("torch") is None:
             return False, "torch не установлен (pip install -e .[voice])"
         return True, ""

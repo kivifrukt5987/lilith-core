@@ -85,8 +85,15 @@ class TestEngineEndpoints:
 
 
 class TestLifespanWithResident:
-    def test_boot_with_dead_resident_survives(self, voice_settings) -> None:
-        """qwen3-резидент назначен, пакета/GPU нет: сервер жив от старта до остановки."""
+    def test_boot_with_dead_resident_survives(self, voice_settings, monkeypatch: pytest.MonkeyPatch) -> None:
+        """qwen3-резидент назначен, движок недоступен: сервер жив от старта до остановки.
+
+        Герметично (дефект-лист 21.10): available() принудительно False — на живой
+        GPU-машине тест не грузит настоящую модель.
+        """
+        from lilith_core.voice.tts_qwen3 import Qwen3TTS
+
+        monkeypatch.setattr(Qwen3TTS, "available", lambda self: (False, "тест: резидент мёртв"))
         voice_settings.voice.tts_resident = "qwen3"
         app = create_app(voice_settings)
         with TestClient(app) as client:

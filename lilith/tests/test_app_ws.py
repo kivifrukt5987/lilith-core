@@ -451,3 +451,7 @@ class TestBrainIntegration:
             hello = ws.receive_json()
         assert hello["data"]["default_profile"] == "chat"
         assert hello["data"]["agent_id"] == "lilith"
+
+# Дефект-лист 21.10 п.4: WS-тесты на Windows asyncio могут висеть вечно —
+# жёсткий лимит на модуль (pytest-timeout; без плагина маркер инертен, ini его знает).
+pytestmark = pytest.mark.timeout(90)

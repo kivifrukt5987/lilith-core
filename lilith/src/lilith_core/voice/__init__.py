@@ -159,9 +159,11 @@ def build_voice_profiles(settings: Settings) -> tuple[dict[str, VoiceProfile], s
 def build_tts_registry(settings: Settings) -> TTSRegistry:
     """Собирает реестр горла и voice-профили из конфига (ADR-027: резидент + шкаф)."""
     backends: list[TTSBackend] = [
-        Qwen3TTS(device=settings.voice.tts_device),   # корона (резидент 0.7.0)
+        Qwen3TTS(device=settings.voice.tts_device,
+                 allow_download=settings.voice.tts_allow_download),  # корона (резидент 0.7.0)
         SileroTTS(device=settings.voice.tts_device),
-        EdgeTTS(),
+        EdgeTTS(healthcheck=settings.voice.cloud_healthcheck,
+                healthcheck_timeout=settings.voice.cloud_healthcheck_timeout_sec),
         CosyVoice2TTS(),                              # шкаф платьев (слоты, Q2)
         FishSpeechTTS(),
         ZeroShotTTS(voices_dir=resolve_path(settings.voice.voices_dir)),
@@ -207,12 +209,22 @@ class VoiceCore:
             logger.error("прогрев резидента '{}' не удался: {} (фолбэк-цепочка ADR-012 жива)", resident, exc)
 
     def _resident_model_id(self, resident: str) -> str | None:
-        """Model id резидента из первого профиля его бэкенда (иначе дефолт движка)."""
-        for profile in self.tts.profiles.values():
+        """Model id резидента. Приоритет (дефект-лист 21.10 п.1):
+        явный ``voice.tts_resident_model_path`` > ``extra.model`` первого профиля
+        движка > дефолт движка (None). Источник логируется — чтобы «прогрелось не
+        то, что в конфиге» больше никогда не было загадкой.
+        """
+        explicit = (self.settings.voice.tts_resident_model_path or "").strip()
+        if explicit:
+            logger.info("резидент '{}': модель из voice.tts_resident_model_path = {}", resident, explicit)
+            return explicit
+        for name, profile in self.tts.profiles.items():
             if profile.backend == resident:
                 model = (profile.extra or {}).get("model")
                 if model:
+                    logger.info("резидент '{}': модель из профиля '{}' = {}", resident, name, model)
                     return str(model)
+        logger.info("резидент '{}': модель не задана конфигом — дефолт движка", resident)
         return None
 
     async def stop(self) -> None:

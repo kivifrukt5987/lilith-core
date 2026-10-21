@@ -29,6 +29,12 @@ if errorlevel 1 (
     "%PYTHON%" -m pip install -e ".[dev,memory]"
 )
 
+"%PYTHON%" -c "import pytest_timeout" 2>nul
+if errorlevel 1 (
+    echo  [LILITH] installing pytest-timeout - WS hang guard, defect 21.10 p.4 ...
+    "%PYTHON%" -m pip install pytest-timeout
+)
+
 echo.
 echo  [LILITH] running tests...
 echo.

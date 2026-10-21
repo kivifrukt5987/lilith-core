@@ -110,7 +110,10 @@ class SileroTTS(TTSBackend):
 
     def available(self) -> tuple[bool, str]:
         import importlib.util
+        import os
 
+        if os.environ.get("LILITH_VOICE_OFFLINE") == "1":
+            return False, "LILITH_VOICE_OFFLINE=1: сетевые бэкенды выключены (стена/тесты)"
         if importlib.util.find_spec("torch") is None:
             return False, "torch не установлен (pip install -e .[voice])"
         return True, ""
@@ -176,16 +179,62 @@ class SileroTTS(TTSBackend):
 
 
 class EdgeTTS(TTSBackend):
-    """edge-tts: голоса Microsoft, ноль локального веса, но облако (нужен интернет)."""
+    """edge-tts: голоса Microsoft, ноль локального веса, но облако (нужен интернет).
+
+    Дефект-лист 21.10 п.2 (ADR-029): за стеной ``available()`` делает TCP-healthcheck
+    с коротким таймаутом (2.5 с) и кэширует вердикт — фолбэк-цепочка пропускает
+    облако молча (без длинных трейсов на каждую реплику). Компромисс: healthcheck
+    синхронный и может занять event loop до таймаута — зато редко (кэш 120 с на
+    позитив, 30 с на негатив) и предсказуемо.
+    """
 
     name = "edge"
+    #: Кэш healthcheck: (monotonic-дедлайн, ok, reason) — один на класс.
+    _health_cache: tuple[float, bool, str] | None = None
+
+    def __init__(
+        self,
+        healthcheck: bool = True,
+        healthcheck_timeout: float = 2.5,
+        healthcheck_host: str = "speech.platform.bing.com",
+        healthcheck_port: int = 443,
+    ) -> None:
+        self.healthcheck = healthcheck
+        self.healthcheck_timeout = healthcheck_timeout
+        self.healthcheck_host = healthcheck_host
+        self.healthcheck_port = healthcheck_port
 
     def available(self) -> tuple[bool, str]:
         import importlib.util
+        import os
 
+        if os.environ.get("LILITH_VOICE_OFFLINE") == "1":
+            return False, "LILITH_VOICE_OFFLINE=1: сетевые бэкенды выключены (стена/тесты)"
         if importlib.util.find_spec("edge_tts") is None:
             return False, "edge-tts не установлен (pip install -e .[voice])"
-        return True, ""
+        if not self.healthcheck:
+            return True, ""
+        import socket
+        import time as time_mod
+
+        now = time_mod.monotonic()
+        cache = EdgeTTS._health_cache
+        if cache is not None and now < cache[0]:
+            return cache[1], cache[2]
+        ok, reason = True, ""
+        try:
+            with socket.create_connection(
+                (self.healthcheck_host, self.healthcheck_port), timeout=self.healthcheck_timeout
+            ):
+                pass
+        except OSError as exc:
+            ok = False
+            reason = (f"облако недоступно (healthcheck {self.healthcheck_host}:"
+                      f"{self.healthcheck_port} за {self.healthcheck_timeout:.1f}с): "
+                      f"{type(exc).__name__}")
+        ttl = 120.0 if ok else 30.0  # негатив кэшируем короче: стена может и подняться
+        EdgeTTS._health_cache = (now + ttl, ok, reason)
+        return ok, reason
 
     async def synthesize(self, text: str, profile: VoiceProfile) -> bytes:
         import edge_tts

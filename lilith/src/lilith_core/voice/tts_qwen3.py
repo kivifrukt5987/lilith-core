@@ -87,8 +87,11 @@ class Qwen3TTS(TTSBackend):
 
     name = "qwen3"
 
-    def __init__(self, device: str = "auto") -> None:
+    def __init__(self, device: str = "auto", allow_download: bool = False) -> None:
         self.device = device
+        #: offline-first (дефект-лист 21.10 п.1): без явного разрешения веса из
+        #: сети НЕ качаются — честная ошибка с рецептом вместо петли ретраев.
+        self.allow_download = allow_download
         self._models: dict[str, Any] = {}
         self._lock = threading.Lock()  # от двойной загрузки (не от дедлока: ADR-024)
 
@@ -112,17 +115,63 @@ class Qwen3TTS(TTSBackend):
         return bool(self._models)
 
     # -- загрузка / выгрузка ----------------------------------------------------- #
+    def resolve_model(self, model_id: str) -> tuple[str, bool]:
+        """Offline-first резолюция модели (дефект-лист 21.10 п.1, ADR-029).
+
+        Порядок: (1) локальная папка — грузим офлайн, сеть не трогаем вовсе;
+        (2) HF-id: ищем в локальном кэше (без сети) — найден → грузим офлайн;
+        (3) не найдено: ``allow_download`` → разрешаем сеть; иначе — ЧЕСТНАЯ
+        FileNotFoundError с рецептом (никакой петли закачки за стеной).
+
+        :return: (model_id, offline) — offline включает HF_HUB_OFFLINE=1 на загрузку.
+        """
+        local = Path(model_id)
+        if local.is_dir():
+            return model_id, True
+        try:
+            from huggingface_hub import try_to_load_from_cache
+
+            cached = try_to_load_from_cache(model_id, "config.json")
+        except ImportError:
+            cached = None
+        if isinstance(cached, str) and cached:  # путь к файлу в кэше = модель в кэше
+            logger.info("TTS qwen3: '{}' найден в HF-кэше — грузим офлайн", model_id)
+            return model_id, True
+        if not self.allow_download:
+            raise FileNotFoundError(
+                f"Модель горла не найдена локально: '{model_id}'. За стеной закачка "
+                "не сработает — честная ошибка вместо петли (ADR-029). Рецепт: скачай "
+                "веса в папку (huggingface-cli download … --local-dir … или ModelScope) "
+                "и укажи путь в voice.tts_resident_model_path / profiles.<душа>.extra.model, "
+                "либо разово разреши сеть: voice.tts_allow_download: true."
+            )
+        return model_id, False
+
     def _load_sync(self, model_id: str) -> Any:
         with self._lock:
             cached = self._models.get(model_id)
             if cached is not None:
                 return cached
+            import os
+
+            resolved, offline = self.resolve_model(model_id)
             from faster_qwen3_tts import FasterQwen3TTS
 
-            logger.info("TTS qwen3: загружаю {} (warmup захватит CUDA-графы — первый раз долго)", model_id)
+            logger.info("TTS qwen3: загружаю {} (offline={}; warmup захватит CUDA-графы — "
+                        "первый раз долго)", resolved, offline)
             t0 = time.perf_counter()
-            model = FasterQwen3TTS.from_pretrained(model_id)
-            model.warmup(prefill_len=100)
+            prev = os.environ.get("HF_HUB_OFFLINE")
+            if offline:
+                os.environ["HF_HUB_OFFLINE"] = "1"  # huggingface_hub не ходит в сеть вовсе
+            try:
+                model = FasterQwen3TTS.from_pretrained(resolved)
+                model.warmup(prefill_len=100)
+            finally:
+                if offline:
+                    if prev is None:
+                        os.environ.pop("HF_HUB_OFFLINE", None)
+                    else:
+                        os.environ["HF_HUB_OFFLINE"] = prev
             self._models[model_id] = model
             logger.success(
                 "TTS qwen3: {} горячая за {:.1f} с (резидент, ADR-027)",

@@ -810,3 +810,7 @@ class TestGroupWs:
             ws.send_text(json.dumps({"type": "speak", "text": "Раз.", "persona": "призрак"}))
             frame = ws.receive_json()
             assert frame["type"] == "error" and frame["code"] == "not_a_member"
+
+# Дефект-лист 21.10 п.4: WS-тесты на Windows asyncio могут висеть вечно —
+# жёсткий лимит на модуль (pytest-timeout; без плагина маркер инертен, ini его знает).
+pytestmark = pytest.mark.timeout(90)

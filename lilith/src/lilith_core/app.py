@@ -449,8 +449,12 @@ def _register_routes(app: FastAPI) -> None:
             return JSONResponse(status_code=400, content={"status": "error", "detail": f"нужен моно-WAV 16 бит: {exc}"})
         try:
             transcript = await voice.transcribe(pcm, rate)
-        except RuntimeError as exc:
-            return JSONResponse(status_code=503, content={"status": "error", "detail": str(exc)})
+        except Exception as exc:  # noqa: BLE001 — дефект-лист 21.10 п.2: короткий 503 без трейса
+            logger.warning("/api/voice/transcribe: {}: {}", type(exc).__name__, str(exc)[:200])
+            return JSONResponse(
+                status_code=503,
+                content={"status": "error", "detail": f"{type(exc).__name__}: {str(exc)[:200]}"},
+            )
         return {
             "text": transcript.text,
             "language": transcript.language,
@@ -474,8 +478,14 @@ def _register_routes(app: FastAPI) -> None:
         profile = payload.get("profile")
         try:
             audio = await voice.speak(text, profile)
-        except RuntimeError as exc:
-            return JSONResponse(status_code=503, content={"status": "error", "detail": str(exc)})
+        except Exception as exc:  # noqa: BLE001 — дефект-лист 21.10 п.2: ADR-012 фолбэки
+            # отработали, все движки легли — отдаём короткий 503, лог без простыни трейса
+            logger.warning("/api/voice/say: ни один бэкенд не справился: {}: {}",
+                           type(exc).__name__, str(exc)[:200])
+            return JSONResponse(
+                status_code=503,
+                content={"status": "error", "detail": f"{type(exc).__name__}: {str(exc)[:200]}"},
+            )
         return Response(content=audio, media_type="audio/wav")
 
     @app.get("/api/voice/engine", tags=["voice"])
