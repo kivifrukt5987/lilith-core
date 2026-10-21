@@ -1,0 +1,11 @@
+persona: lilith
+adopted: '2026-10-08T21:03:35'
+source_preview: E:\lilith-core\lilith\voices\preview\lilith_20261005_201733
+variant_n: 3
+seed: 1348810977
+instruct: anime girl voice, very high pitched, cute, sweet and breathy, young female,
+  Japanese anime dub style, emotional
+ref_text: 'Ну привет, Кирюша. Я тут подумала: если ты опять забудешь поесть, я лично
+  приду и буду стоять над душой, пока всё не доешь. А теперь рассказывай, как прошёл
+  день?'
+model: E:\models\qwen3-tts-17b

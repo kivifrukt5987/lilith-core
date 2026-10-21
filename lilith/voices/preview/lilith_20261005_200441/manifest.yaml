@@ -1,0 +1,84 @@
+persona: lilith
+created: '2026-10-05T20:04:54'
+model: E:\models\qwen3-tts-17b
+backend: torch
+instruct: сладкий высокий женский голос, молодой и чистый, как у главной героини romance-аниме,
+  с лёгким придыханием и нежной улыбкой в интонации
+text: 'Ну привет, Кирюша. Я тут подумала: если ты опять забудешь поесть, я лично приду
+  и буду стоять над душой, пока всё не доешь. А теперь рассказывай, как прошёл день?'
+language: Russian
+seed_base: 1995839296
+random_seeds: true
+variants:
+- n: 1
+  file: preview_01_seed1995839296.wav
+  seed: 1995839296
+  audio_sec: 12.56
+  gen_sec: 6.16
+  rtf: 2.04
+- n: 2
+  file: preview_02_seed1995840296.wav
+  seed: 1995840296
+  audio_sec: 12.08
+  gen_sec: 5.68
+  rtf: 2.13
+- n: 3
+  file: preview_03_seed1995841296.wav
+  seed: 1995841296
+  audio_sec: 14.4
+  gen_sec: 6.78
+  rtf: 2.12
+- n: 4
+  file: preview_04_seed1995842296.wav
+  seed: 1995842296
+  audio_sec: 14.08
+  gen_sec: 7.02
+  rtf: 2.01
+- n: 5
+  file: preview_05_seed1995843296.wav
+  seed: 1995843296
+  audio_sec: 13.04
+  gen_sec: 6.09
+  rtf: 2.14
+- n: 6
+  file: preview_06_seed1995844296.wav
+  seed: 1995844296
+  audio_sec: 13.92
+  gen_sec: 6.5
+  rtf: 2.14
+- n: 7
+  file: preview_07_seed1995845296.wav
+  seed: 1995845296
+  audio_sec: 15.04
+  gen_sec: 7.0
+  rtf: 2.15
+- n: 8
+  file: preview_08_seed1995846296.wav
+  seed: 1995846296
+  audio_sec: 14.88
+  gen_sec: 6.99
+  rtf: 2.13
+- n: 9
+  file: preview_09_seed1995847296.wav
+  seed: 1995847296
+  audio_sec: 13.2
+  gen_sec: 6.21
+  rtf: 2.12
+- n: 10
+  file: preview_10_seed1995848296.wav
+  seed: 1995848296
+  audio_sec: 11.36
+  gen_sec: 5.34
+  rtf: 2.13
+- n: 11
+  file: preview_11_seed1995849296.wav
+  seed: 1995849296
+  audio_sec: 14.16
+  gen_sec: 6.63
+  rtf: 2.14
+- n: 12
+  file: preview_12_seed1995850296.wav
+  seed: 1995850296
+  audio_sec: 12.24
+  gen_sec: 5.74
+  rtf: 2.13

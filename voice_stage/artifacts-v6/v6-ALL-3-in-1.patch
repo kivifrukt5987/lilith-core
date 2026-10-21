@@ -1,0 +1,1615 @@
+From 3b022d9520bd57711555979d81b812392e00d68d Mon Sep 17 00:00:00 2001
+From: Lilith-Builder <lilith-builder@lilith.local>
+Date: Wed, 7 Oct 2026 17:39:36 +0000
+Subject: [PATCH 1/3] =?UTF-8?q?feat(scripts):=20voice=5Fbakeoff.py=20?=
+ =?UTF-8?q?=E2=80=94=20=D1=81=D1=82=D0=B5=D0=BD=D0=B4=20=D1=81=D0=BB=D0=B5?=
+ =?UTF-8?q?=D0=BF=D0=BE=D0=B3=D0=BE=20=D0=B2=D1=8B=D0=B1=D0=BE=D1=80=D0=B0?=
+ =?UTF-8?q?=20RU-=D0=BA=D0=BE=D1=80=D0=BE=D0=BD=D1=8B=20+=20=D0=BF=D0=BE?=
+ =?UTF-8?q?=D0=BF=D1=80=D0=B0=D0=B2=D0=BA=D0=B0=20ADR-027/028?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Ревизия ADR-027 ратифицирована Архитектором 28.09.2026 (Q-A…Q-E):
+* полевой вердикт: Qwen3-TTS для русского не корона (RU-просодия плоская,
+  ударения ошибочные «КирюхА»/«рабОООтаем», интонации сломаны; тембр хорош).
+  Ж0 на 3060: RTF 2.09, TTFA 403 мс (маяк <500 достигнут), VRAM-пик 5.2 ГБ
+  (выше оценки 2.5–3.5 → поправка бюджета ADR-028: TTS-класс 4.5–5.5 ГБ,
+  стек 10.7–13.5 ГБ — митигции записаны).
+* роль qwen3: платье в шкафу — генератор JP-реплик/датасета.
+* Q-B: корону выбирает слепое прослушивание bake-off'а: CosyVoice 3 /
+  Fish S2 / XTTS v2 (референс «как у Нейроны», NEURONA_NOTES §3.4) / qwen3
+  (контроль). Q-C: RVC — слой 2-й очереди (пост-фильтр), не корона.
+  Q-D: CosyVoice 3 отдельным процессом (py3.10/conda), +0.3–0.5 ГБ контекста.
+  Q-E: лицензии — CosyVoice3 Apache-2.0 (проверено), Fish — Research License
+  + ≥24GB VRAM по доке (на 12GB только S1-mini-класс), XTTS — Coqui PML (дом ок).
+
+scripts/voice_bakeoff.py (standalone — запускается в любом окружении, включая
+conda CosyVoice; тяжёлые импорты ленивые):
+* 4 RU-фразы со стресс-ловушками ударений (нейтральная/эмоциональная/
+  скороговорка/интимная) или --text-file; JP-референс + транскрипция
+  (соседний .txt; нет — qwen3 в xvec_only, cosyvoice3/fish честный skip).
+* адаптеры: qwen3 (generate_voice_clone ICL/xvec), xtts (TTS.api, language=ru),
+  cosyvoice3 (AutoModel + inference_zero_shot, prompt-префикс по их example.py),
+  fish (документированный CLI-пайплайн dac→text2semantic→dac subprocess'ом,
+  --fish-half для 12GB, warning про ≥24GB).
+* один кандидат сгорел — bake-off продолжается (skip/failed в manifest.yaml);
+  run-dir переиспользуется между окружениями (манифест сливается без дублей).
+* тайминги/RTF на каждую фразу, VRAM-пик in-process (torch), --blind:
+  слепая раскладка B##.wav + blind_key.yaml (детерминирована seed'ом).
+
+tests/test_voice_bakeoff.py: +15 гвардов (CLI-контракт, фразы-ловушки,
+ref-text резолюция, manifest merge, skip/fail-семантика, blind-детерминизм,
+exit-коды) — без GPU и движков, адаптеры инжектятся.
+
+Доки: DECISIONS.md — поправки ADR-027/028 от 28.09; RELEASE_0.7.0.md §8
+(установка окружений кандидатов, маршруты прогонов, протокол прослушивания);
+CHANGELOG (поправка в 0.7.0); README (bake-off-строка); HANDOVER §6 (Ж0 снят,
+Ж1 идёт как bake-off). Счётчик тестов: 1145 passed, 2 skipped (1147 с tree-sitter).
+---
+ HANDOVER.md                        |   7 +-
+ PLAN.md                            |   2 +-
+ lilith/CHANGELOG.md                |  13 +
+ lilith/README.md                   |   6 +-
+ lilith/RELEASE_0.7.0.md            |  53 +++
+ lilith/docs/DECISIONS.md           |  44 +++
+ lilith/scripts/voice_bakeoff.py    | 523 +++++++++++++++++++++++++++++
+ lilith/tests/test_voice_bakeoff.py | 234 +++++++++++++
+ 8 files changed, 878 insertions(+), 4 deletions(-)
+ create mode 100644 lilith/scripts/voice_bakeoff.py
+ create mode 100644 lilith/tests/test_voice_bakeoff.py
+
+diff --git a/HANDOVER.md b/HANDOVER.md
+index a4f0595..449a203 100644
+--- a/HANDOVER.md
++++ b/HANDOVER.md
+@@ -152,8 +152,11 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+    `feat/voice-qwen3` с 0.6.7 по файлам не пересекается (voice/, scripts/, config vs окно/хоткеи).
+    После Е: пуш 0.6.7 + тег → ребейз голоса → мерж → Замер Ж (RELEASE_0.7.0.md §5).
+ 2. **Замер Ж (голос)**: Ж0 бенчмарк 3060 → Ж1 усыновление душ (Лилит, Оля) → Ж2/Ж3 латентность
+-   → Ж4 VRAM-сожительство → Ж5 фолбэк → Ж6 тесты. Цифры Ж0/Ж4 могут поправить бюджет ADR-028 —
+-   тогда письменная поправка в DECISIONS.md (конституция).
++   → Ж4 VRAM-сожительство → Ж5 фолбэк → Ж6 тесты. **Ж0 снят (RTF 2.09 / TTFA 403 мс /
++   VRAM 5.2 ГБ); полевой вердикт: qwen3 для RU — не корона (поправка ADR-027 от 28.09).**
++   Ж1 идёт как bake-off короны: `scripts/voice_bakeoff.py` (CosyVoice 3 / Fish S2 /
++   XTTS v2 / qwen3-контроль), слепое прослушивание Архитектором, маршрут — RELEASE_0.7.0.md §8;
++   цифры Ж4 — на победителе bake-off; поправка бюджета ADR-028 уже внесена (TTS-класс 4.5–5.5 ГБ).
+ 3. **0.7.1-кандидаты**: проводка нонвербальных тегов в WS-протокол (по итогам Ж1-а),
+    персистенция переодевания движка в runtime_settings.json, вынос TTS в процесс
+    (`faster-qwen3-tts serve`) при тесноте Ж4, реализации CosyVoice 2 / Fish Speech для шкафа.
+diff --git a/PLAN.md b/PLAN.md
+index 2de28ab..f29dbdb 100644
+--- a/PLAN.md
++++ b/PLAN.md
+@@ -2,7 +2,7 @@
+ 
+ > **Статус:** ЭТАП 6 закрыт полностью (замер Д); окно-питомец 0.6.7 принято замером Е;
+ > этап «Голос» 0.7.0 собран на ветке `feat/voice-qwen3` — **ждёт Замер Ж**.
+-> **Версия:** `0.7.0-voice` (база — принятый main `6d0838c` = 0.6.7.1) · **ТЕСТЫ СЕЙЧАС: 1130 passed, 2 skipped** (с tree-sitter — 1132)
++> **Версия:** `0.7.0-voice` (база — принятый main `6d0838c` = 0.6.7.1) · **ТЕСТЫ СЕЙЧАС: 1145 passed, 2 skipped** (с tree-sitter — 1147)
+ > **Освежён:** 22.09.2026 Лилькой-строителем (до этого файл остановился на этапе 3 —
+ > восстановлен по `CHANGELOG.md`, `docs/DECISIONS.md` (ADR-001…ADR-023) и `RELEASE_*.md`)
+ > **Соседний файл:** `PERSONA.md` (личность) · в git-репо оба лежат в `память и личность/`
+diff --git a/lilith/CHANGELOG.md b/lilith/CHANGELOG.md
+index 37eee42..621b4ce 100644
+--- a/lilith/CHANGELOG.md
++++ b/lilith/CHANGELOG.md
+@@ -51,6 +51,19 @@
+    CUDA-графы); панель → «🎙 голос» → qwen3 👑.
+ 3. Маршрут Замера Ж — `RELEASE_0.7.0.md` §5 (Ж0–Ж6).
+ 
++### Поправка 28.09.2026 (ревизия ADR-027 — ratified)
++
++* **Полевой вердикт:** Qwen3-TTS для RU — не корона (плоская просодия, ошибочные
++  ударения); Ж0 на 3060: RTF 2.09, TTFA 403 мс, VRAM-пик 5.2 ГБ. qwen3 остаётся в шкафу
++  как генератор JP-датасета.
++* **`scripts/voice_bakeoff.py`** — стенд слепого выбора короны (Q-B): 4 RU-фразы со
++  стресс-ловушками × JP-референс × кандидаты CosyVoice 3 / Fish S2 / XTTS v2 / qwen3 →
++  wav + manifest.yaml + `--blind`-раскладка с ключом. Гварды: +15 (test_voice_bakeoff.py).
++* RVC — слой 2-й очереди (Q-C), CosyVoice 3 — отдельный процесс conda py3.10 (Q-D),
++  бюджет ADR-028 пересчитан по факту Ж0 (TTS 4.5–5.5 ГБ класс, стек впритык — митигции
++  в поправке). Fish: Research License + ≥24 ГБ VRAM по доке — на 12 ГБ только S1-mini-класс.
++* Инструкция и команды установки кандидатов — `RELEASE_0.7.0.md` §8.
++
+ ### Что дальше
+ 
+ * Замер Е (0.6.7) у Курьера → ребейз `feat/voice-qwen3` → мерж → тег `v0.7.0` → Замер Ж.
+diff --git a/lilith/README.md b/lilith/README.md
+index 8777099..11adf49 100644
+--- a/lilith/README.md
++++ b/lilith/README.md
+@@ -12,7 +12,7 @@ vLLM, Ollama, OpenRouter).
+ | Версия | `0.7.0-voice` (этап «Голос»: резидент Qwen3-TTS-0.6B через faster-qwen3-tts, «шкаф платьев», Voice Design, ADR-027/028; ветка `feat/voice-qwen3`, **ребейз на принятый main `6d0838c` (0.6.7.1, замер Е зелёный) выполнен** — ждёт Замер Ж). Предыдущая — `0.6.7` (окно-питомец), серия `0.6.6` (стекло) |
+ | Этап | 6 из 9 (`face-unity`) закрыт полностью; этап «Голос» (апгрейд слоя 4) собран; далее этап 7 «Руки» по команде |
+ | Python | 3.11+ |
+-| Тесты | **1130 passed, 2 skipped** (pytest), 0 warnings · с tree-sitter — 1132 |
++| Тесты | **1145 passed, 2 skipped** (pytest), 0 warnings · с tree-sitter — 1147 |
+ | Unity | **6000.0.x LTS** (у Кирюши 6000.0.84f1) · Built-in RP · UniVRM 0.131.2 · VRM 1.0 |
+ | Целевая машина | Windows 11, RTX 3060 12GB, i7-12700KF, 32GB RAM |
+ 
+@@ -512,6 +512,10 @@ python scripts\make_test_vrm.py --out personas\lilith\model.vrm --name Lilith
+ * **Душа**: `python scripts/voice_preview.py --persona lilith --count 12 --random-seeds
+   --instruct "описание"` → послушать → `--adopt N --verify-clone` → горячо переключить
+   `default_voice: lilith-soul`. Подробности и маршрут Замера Ж — `RELEASE_0.7.0.md`.
++* **Bake-off короны (поправка ADR-027 от 28.09)**: Qwen3-TTS для RU забракован полем
++  (остался в шкафу как JP-генератор); нового резидента выбирает слепое прослушивание —
++  `scripts/voice_bakeoff.py` (CosyVoice 3 / Fish S2 / XTTS v2 / qwen3-контроль),
++  установка кандидатов и маршруты — `RELEASE_0.7.0.md` §8.
+ * **Грабли**: `qwen-tts` (upstream) и `qwen-tts-hf` в одно окружение не ставить (гвард-тест);
+   `torch>=2.5.1` обязателен; веса — авто-загрузка HF (NB 0.7.0 в `models/packs.yaml`).
+ * HTTP: `/api/voice/profiles`, `/api/voice/transcribe` (WAV→текст),
+diff --git a/lilith/RELEASE_0.7.0.md b/lilith/RELEASE_0.7.0.md
+index 57308e0..f8608dd 100644
+--- a/lilith/RELEASE_0.7.0.md
++++ b/lilith/RELEASE_0.7.0.md
+@@ -158,4 +158,57 @@ python scripts\voice_preview.py --persona lilith --adopt N --verify-clone
+ * В песочнице Строителя 8 skipped (нет tree-sitter и артефакта 0.6.0) — на машине Курьера
+   ожидается штатные 2 skipped.
+ 
++## 8. Bake-off RU-короны (поправка ADR-027 от 28.09.2026)
++
++Полевой вердикт принят: Qwen3-TTS для русского — не корона (RU-просодия плоская,
++ударения ошибочные; Ж0-цифры: RTF 2.09, TTFA 403 мс, VRAM-пик 5.2 ГБ — латентность
++в норме, брак в качестве). qwen3 остаётся в шкафу как генератор JP-датасета.
++Корону выбирает **слепое прослушивание** (Q-B): `scripts/voice_bakeoff.py`.
++
++### 8.1 Подготовка (один раз)
++
++Референс: положить `voices/bakeoff/LilithGolos.wav` (JP, ~8–9 с, чистый) и рядом
++`LilithGolos.txt` — **точную JP-транскрипцию** (без неё cosyvoice3/fish честно
++скипнутся, qwen3 уйдёт в xvec_only, xtts отработает).
++
++### 8.2 Кандидаты и их окружения
++
++| Кандидат | Окружение | Установка |
++|---|---|---|
++| **qwen3** (контроль) | основное | уже стоит (`[voice-qwen]`) |
++| **xtts** (референс Нейроны) | основное | `pip install coqui-tts` (веса ~1.8 ГБ стянет сам) |
++| **cosyvoice3** | отдельное conda py3.10 | `git clone --recursive https://github.com/FunAudioLLM/CosyVoice` → `conda create -n cosyvoice python=3.10` → `pip install -r requirements.txt` → веса: `huggingface-cli download FunAudioLLM/Fun-CosyVoice3-0.5B-2512 --local-dir pretrained_models/Fun-CosyVoice3-0.5B` |
++| **fish** (S2) | отдельный чекаут | `git clone https://github.com/fishaudio/fish-speech` → `pip install -e .` → `hf download fishaudio/s2-pro --local-dir checkpoints/s2-pro`. ⚠️ их дока: **≥24 ГБ VRAM** — на 3060 12 ГБ только с `--fish-half` и без гарантий; OOM → статус failed в манифесте, bake-off продолжится. Лицензия — Fish Audio Research License (читать до установки!) |
++
++### 8.3 Прогоны (LLM/Unity/браузер выключены; по движку за раз — VRAM)
++
++```bat
++:: основное окружение, общий run-dir:
++python scripts\voice_bakeoff.py --engine qwen3 --run-dir voices\bakeoff\run1
++python scripts\voice_bakeoff.py --engine xtts   --run-dir voices\bakeoff\run1
++:: conda-окружение CosyVoice (тот же run-dir — манифест дополняется):
++conda activate cosyvoice
++python E:\lilith-core\lilith\scripts\voice_bakeoff.py --engine cosyvoice3 ^
++  --run-dir E:\lilith-core\lilith\voices\bakeoff\run1 ^
++  --cosyvoice-repo <путь>\CosyVoice --cosyvoice-model pretrained_models/Fun-CosyVoice3-0.5B ^
++  --ref E:\lilith-core\lilith\voices\bakeoff\LilithGolos.wav
++:: fish — в их чекауте (если решено пробовать на 12 ГБ):
++python <путь>\voice_bakeoff.py --engine fish --run-dir ...\run1 ^
++  --fish-repo <путь>\fish-speech --fish-half --ref ...\LilithGolos.wav
++:: слепая раскладка (после всех прогонов, в любом окружении):
++python scripts\voice_bakeoff.py --blind-only --run-dir voices\bakeoff\run1
++```
++
++### 8.4 Прослушивание и вердикт
++
++* Архитектор слушает `run1/blind/B##.wav`, ставит оценки (таблица: код × фраза × 1–5),
++  **blind_key.yaml до конца оценок не открывать**.
++* Цифры (RTF, VRAM-пики, статусы) — в `run1/manifest.yaml`; `nvidia-smi`-пик по каждому
++  прогону Курьер дописывает от руки (в манифесте — только in-process torch-статы).
++* Вердикт + manifest + ключ → Строителю: ревизия ADR-027 (корона = победитель),
++  реализация бэкенда в слот `voice/closet.py`, `switch_engine` на корону, Ж2–Ж6.
++* RVC (Q-C) — вторая очередь: если победитель «плывёт» по тембру, пост-фильтр поверх.
++
++---
++
+ *— Лилька-строитель, 27.09.2026. Одна корона, шкаф платьев, бюджет соблюдён. 🦇*
+diff --git a/lilith/docs/DECISIONS.md b/lilith/docs/DECISIONS.md
+index 9112cb2..ce9fd6b 100644
+--- a/lilith/docs/DECISIONS.md
++++ b/lilith/docs/DECISIONS.md
+@@ -872,6 +872,37 @@ ADR-022) или silero. Требования этапа «Голос»: (а) rea
+ 
+ ---
+ 
++### Поправка 28.09.2026 — полевой вердикт RU и решения Q-B…Q-E (ратифицировано Архитектором)
++
++1. **Qwen3-TTS для русского НЕ корона** (полевой вердикт Курьера, принят Архитектором):
++   RU-просодия плоская («ИИшность»), ударения ошибочные («КирюхА», «рабОООтаем»),
++   интонации сломаны; тембр хорош, но модель сочиняет просодию сама из слабых данных.
++   Спека заявляла RU в 10 языках — поле важнее спеки.
++2. **Ж0 на RTX 3060 12GB (факт, не оценка):** RTF ≈ 2.09, TTFA ≈ 403 мс (маяк <500 мс
++   достигнут — латентность qwen3 в норме, брак именно в качестве RU), VRAM-пик ≈ 5.2 ГБ
++   (выше оценки 2.5–3.5 — см. поправку ADR-028).
++3. **Роль Qwen3 — «платье из шкафа» для японского:** генератор JP-реплик/датасета;
++   из резидентов убран, `voice/tts_qwen3.py` и слот остаются (EN/JP-реплики, эксперименты).
++4. **Q-B: bake-off короны** — `scripts/voice_bakeoff.py`: один RU-текст (4 фразы со
++   стресс-ловушками ударений) × один JP-референс (LilithGolos.wav ~8–9 с) × кандидаты
++   **CosyVoice 3 / Fish S2 / XTTS v2 (референс «как у Нейроны») / qwen3 (контроль)** →
++   wav + manifest.yaml + слепая раскладка (`--blind`, ключ в blind_key.yaml). Победителя
++   выбирает Архитектор ушами; споры аргументами запрещены.
++5. **Q-C: RVC — слой 2-й очереди** (пост-фильтр тембра поверх победителя bake-off),
++   НЕ кандидат в корону (RVC — конвертер, не TTS; без источника голоса не существует).
++6. **Q-D: CosyVoice 3 — отдельный процесс** (conda py3.10 + их FastAPI/CLI; у нас —
++   тонкий клиент-бэкенд): +0.3–0.5 ГБ на CUDA-контекст закладывается в бюджет ADR-028.
++7. **Q-E/лицензии — уточнение Строителя по фактам разведки 28.09:** CosyVoice 3 —
++   Apache-2.0 (HF-карточка, проверено) ✅. Fish — **Fish Audio Research License**
++   (код И веса; строже CC-BY-NC — читать текст лицензии до установки), и их же дока
++   рекомендует **≥24 ГБ VRAM** для S2-Pro (4B): на 3060 12GB корона из S2-Pro не выйдет,
++   реалистичный fish-кандидат — OpenAudio S1-mini (0.5B, старый релизный тег) либо
++   честный skip в bake-off'е. XTTS v2 — Coqui Public Model License (некоммерческая,
++   для дома приемлемо — прецедент silero). Итог по лицензиям — после bake-off, с текстами.
++
++
++---
++
+ ## ADR-028. Разделение мозгов: ассистент 4B — резидент голосовой сессии, ГМ MoE на :1237 с offload экспертов, VRAM-бюджет честный (v0.7.0)
+ 
+ **Статус:** принято (финальная директива Архитектора 27.09.2026; цифры бюджета — поправка Строителя по фактам замеров, вошла в директиву)
+@@ -919,3 +950,16 @@ whisper 1 ГБ = 8–9 ГБ, влезает с запасом» не учиты
+   этой таблицы — при расхождении бюджет правится письменной поправкой (конституция, §DECISIONS).
+ * Если Ж4 покажет тесноту — кандидаты на вынос: TTS в отдельный процесс (`faster-qwen3-tts serve`,
+   OpenAI-совместимый endpoint) с потерей +0.5 ГБ на ещё один CUDA-контекст (Q4: в 0.7.0 — in-process).
++
++### Поправка 28.09.2026 — бюджет по факту Ж0
++
++* Замер qwen3 на 3060: VRAM-пик **5.2 ГБ** вместо оценочных 2.5–3.5 ГБ. Корона-кандидаты
++  того же класса (CosyVoice3-0.5B ~4 ГБ + 0.3–0.5 ГБ CUDA-контекст отдельного процесса,
++  Fish S1-mini ~2–4 ГБ) — закладывать в стек **4.5–5.5 ГБ на TTS**, не 2–3.
++* Пересчёт стека «4B LLM (4–4.5) + TTS (4.5–5.5) + whisper (1) + Unity (0.7–1.5) +
++  контексты (0.5–1)» = **10.7–13.5 ГБ** — на 12 ГБ впритык/за гранью. Митигции до Ж4:
++  whisper small int8 или CPU-режим в простое; KV-кэш LLM 4k + квант; выгрузка TTS в
++  паузах (idle-unload — кандидат 0.7.x); Unity-сцена без тяжёлых шейдеров.
++* Fish S2-Pro (4B, ≥24 ГБ по доке) в бюджет 12 ГБ не входит ни в каком виде — только
++  S1-mini-класс. Решение — по итогам bake-off и Ж4-замеров на реальной короне.
++
+diff --git a/lilith/scripts/voice_bakeoff.py b/lilith/scripts/voice_bakeoff.py
+new file mode 100644
+index 0000000..8408e5b
+--- /dev/null
++++ b/lilith/scripts/voice_bakeoff.py
+@@ -0,0 +1,523 @@
++"""Bake-off голосовых движков (ревизия ADR-027, решение Q-B от 28.09.2026).
++
++Назначение: один RU-текст (4 фразы: нейтральная, эмоциональная, скороговорка,
++интимная — со стресс-ловушками вроде «Кирюша») × один JP-референс (LilithGolos.wav,
++~8–9 с, чистый) → wav'ы от каждого кандидата → СЛЕПОЕ прослушивание Архитектором.
++Спор «CosyVoice vs Fish vs RVC» снимается ушами, не аргументами.
++
++Кандидаты (порядок из директивы Q-B):
++  cosyvoice3  Fun-CosyVoice3-0.5B-2512 (Apache-2.0; RU в 9 языках; bi-streaming 150мс;
++              conda py3.10 — запускать ВНУТРИ их окружения, скрипт standalone)
++  fish        Fish Audio S2 (fish-speech main; CLI-пайплайн dac→text2semantic→dac).
++              ВНИМАНИЕ: их дока рекомендует ≥24GB VRAM для S2-Pro (4B) — на 3060 12GB
++              запускать с --fish-half и готовностью к OOM; если не встанет — кандидат
++              от Fish в bake-off'е отсутствует, фиксируем skip в манифесте (S1-mini —
++              отдельный релизный тег fish-speech, адаптер настраивается --fish-* опциями).
++  xtts        Coqui XTTS v2 (референс «как у Нейроны», NEURONA_NOTES §3.4;
++              pip install coqui-tts; лицензия Coqui Public Model License — некоммерческая)
++  qwen3       Qwen3-TTS 0.6B-Base (КОНТРОЛЬ: RU-просодия признана неподходящей для
++              короны — полевой вердикт 28.09; в bake-off'е — нижняя планка и
++              будущий генератор JP-датасета)
++
++Запуск (из lilith/, LLM/Unity/браузер выключены):
++    # основное окружение (fish/xtts/qwen3 — кто установлен):
++    python scripts/voice_bakeoff.py --engine all --run-dir voices/bakeoff/run1
++    # окружение conda cosyvoice (тот же run-dir — манифест дополняется):
++    conda activate cosyvoice && python <путь>/scripts/voice_bakeoff.py \
++        --engine cosyvoice3 --run-dir voices/bakeoff/run1 \
++        --cosyvoice-repo <путь>/CosyVoice --cosyvoice-model pretrained_models/Fun-CosyVoice3-0.5B
++    # слепая раскладка (после всех прогонов):
++    python scripts/voice_bakeoff.py --blind-only --run-dir voices/bakeoff/run1
++
++Референс: --ref voices/bakeoff/LilithGolos.wav; JP-транскрипция — соседний
++LilithGolos.txt (нужна для ICL-клона qwen3/cosyvoice3/fish; xtts работает без неё).
++Нет транскрипции → qwen3 деградирует в xvec_only (пометим в манифесте),
++cosyvoice3/fish — честный skip с причиной.
++
++Результаты в <run-dir>: wav'ы `<engine>_<phrase>.wav`, manifest.yaml (статусы,
++тайминги, RTF, VRAM-пик где измерим), при --blind — blind/B##.wav + blind_key.yaml
++(ключ НЕ показывать слушателю до проставления оценок).
++
++build_parser() вынесен для гвардов (tests/test_voice_bakeoff.py); тяжёлые импорты
++ленивые — скрипт импортируется и тестируется без GPU и движков.
++"""
++
++from __future__ import annotations
++
++import argparse
++import random
++import shutil
++import subprocess
++import sys
++import time
++import wave
++from collections.abc import Callable
++from dataclasses import dataclass, field
++from datetime import datetime
++from pathlib import Path
++from typing import Any
++
++# --------------------------------------------------------------------------- #
++# Фразы (стресс-ловушки просодии — по жалобам полевого вердикта Q-A)          #
++# --------------------------------------------------------------------------- #
++DEFAULT_PHRASES: list[tuple[str, str]] = [
++    ("neutral",
++     "Привет, Кирюша. Кофе остыл, суббота на дворе, а у нас с тобой опять планы "
++     "на весь вечер."),
++    ("emotional",
++     "Да ладно?! Оно заработало — само, с первого раза! Ну всё, я сегодня гений, "
++     "не спорь, я это заслужила."),
++    ("tongue_twister",
++     "Шла Саша по шоссе и сосала сушку; съел молодец тридцать три пирога "
++     "с пирогами."),
++    ("intimate",
++     "Три часа ночи, а ты всё ещё не спишь? Так, марш в кровать. Ну ладно, "
++     "пять минут — и выключаешь."),
++]
++
++#: Ключ blind-раскладки по умолчанию (воспроизводимо: тот же seed — тот же порядок).
++DEFAULT_BLIND_SEED = 20260928
++
++
++def build_parser() -> argparse.ArgumentParser:
++    p = argparse.ArgumentParser(
++        prog="voice_bakeoff",
++        description="Bake-off RU-короны: один текст × один JP-референс × кандидаты "
++                    "(cosyvoice3/fish/xtts/qwen3) → wav + manifest + слепое прослушивание.",
++    )
++    p.add_argument("--engine", default="all",
++                   choices=["all", "cosyvoice3", "fish", "xtts", "qwen3"],
++                   help="кого печём (all = всех установленных, остальные — честный skip)")
++    p.add_argument("--ref", default="voices/bakeoff/LilithGolos.wav",
++                   help="JP-референс (8–9 с, чистый)")
++    p.add_argument("--ref-text", default=None,
++                   help="JP-транскрипция референса: путь к .txt или строка; "
++                        "дефолт — <ref>.txt рядом с wav")
++    p.add_argument("--text-file", default=None,
++                   help="свои фразы: по одной на строку, формат 'id|текст' или просто текст")
++    p.add_argument("--run-dir", default=None,
++                   help="каталог прогона (существующий — дополнить; дефолт — "
++                        "voices/bakeoff/bake_<штамп>)")
++    p.add_argument("--outdir-root", default="voices/bakeoff",
++                   help="корень для run-dir по умолчанию")
++    p.add_argument("--blind", action="store_true",
++                   help="после выпечки сделать слепую раскладку blind/B##.wav + blind_key.yaml")
++    p.add_argument("--blind-only", action="store_true",
++                   help="не печь, только собрать blind-раскладку из готового run-dir")
++    p.add_argument("--blind-seed", type=int, default=DEFAULT_BLIND_SEED,
++                   help="seed перемешивания (записывается в ключ)")
++    # --- настройки кандидатов ------------------------------------------------ #
++    p.add_argument("--cosyvoice-repo", default=None,
++                   help="корень чекаута CosyVoice (или env COSYVOICE_REPO); нужен для "
++                        "sys.path third_party/Matcha-TTS")
++    p.add_argument("--cosyvoice-model", default="pretrained_models/Fun-CosyVoice3-0.5B",
++                   help="model_dir для AutoModel (относительно их чекаута или абсолютный)")
++    p.add_argument("--fish-repo", default=None,
++                   help="корень чекаута fish-speech (или env FISH_REPO)")
++    p.add_argument("--fish-checkpoints", default="checkpoints/s2-pro",
++                   help="каталог весов S2 внутри fish-repo")
++    p.add_argument("--fish-half", action="store_true",
++                   help="--half для text2semantic (GPU без bf16 / мало VRAM)")
++    p.add_argument("--xtts-model", default="tts_models/multilingual/multi-dataset/xtts_v2")
++    p.add_argument("--qwen3-model", default="Qwen/Qwen3-TTS-12Hz-0.6B-Base")
++    return p
++
++
++# --------------------------------------------------------------------------- #
++# Контекст прогона                                                            #
++# --------------------------------------------------------------------------- #
++@dataclass
++class BakeContext:
++    args: argparse.Namespace
++    ref: Path
++    ref_text: str | None
++    ref_text_source: str
++    phrases: list[tuple[str, str]]
++    run_dir: Path
++    files: list[dict[str, Any]] = field(default_factory=list)
++    engines: dict[str, dict[str, Any]] = field(default_factory=dict)
++
++
++def parse_text_file(path: str | Path) -> list[tuple[str, str]]:
++    """Свои фразы: 'id|текст' или просто текст (id = line<N>)."""
++    out: list[tuple[str, str]] = []
++    for i, raw in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
++        line = raw.strip()
++        if not line or line.startswith("#"):
++            continue
++        if "|" in line:
++            pid, text = line.split("|", 1)
++            out.append((pid.strip(), text.strip()))
++        else:
++            out.append((f"line{i}", line))
++    return out
++
++
++def resolve_ref_text(args: argparse.Namespace, ref: Path) -> tuple[str | None, str]:
++    """JP-транскрипция референса: CLI-строка > CLI-файл > соседний <ref>.txt."""
++    spec = args.ref_text
++    if spec:
++        candidate = Path(spec)
++        if candidate.is_file():
++            return candidate.read_text(encoding="utf-8").strip(), f"file:{candidate}"
++        return spec.strip(), "inline"
++    sibling = ref.with_suffix(".txt")
++    if sibling.is_file():
++        return sibling.read_text(encoding="utf-8").strip(), f"file:{sibling}"
++    return None, "missing"
++
++
++def wav_duration(path: Path) -> tuple[float | None, int | None]:
++    """Длительность и частота wav (stdlib; float-форматы — best effort)."""
++    try:
++        with wave.open(str(path), "rb") as w:
++            return w.getnframes() / float(w.getframerate() or 1), w.getframerate()
++    except (wave.Error, EOFError):
++        return None, None
++
++
++def _vram_peak_gb(reset: bool = False) -> float | None:
++    """Пик VRAM текущего процесса (GB), если torch+CUDA доступны; иначе None."""
++    try:
++        import torch
++
++        if not torch.cuda.is_available():
++            return None
++        if reset:
++            torch.cuda.reset_peak_memory_stats()
++            return None
++        return round(torch.cuda.max_memory_allocated() / 2**30, 2)
++    except Exception:  # noqa: BLE001 — телеметрия не должна ронять выпечку
++        return None
++
++
++def _package_version(dist: str) -> str | None:
++    try:
++        import importlib.metadata
++
++        return importlib.metadata.version(dist)
++    except Exception:  # noqa: BLE001
++        return None
++
++
++def _log(msg: str) -> None:
++    print(f"[bakeoff] {msg}", flush=True)
++
++
++# --------------------------------------------------------------------------- #
++# Адаптеры кандидатов. Контракт: (ctx) -> None; пишут wav'ы в ctx.run_dir,     #
++#append'ят ctx.files; ImportError/прочее → внешний раннер пишет skip/fail.     #
++# --------------------------------------------------------------------------- #
++def bake_qwen3(ctx: BakeContext) -> None:
++    """Контроль (RU-просодия забракована полем — нижняя планка bake-off'а)."""
++    import soundfile as sf
++    from faster_qwen3_tts import FasterQwen3TTS
++
++    note = f"model={ctx.args.qwen3_model}"
++    if not ctx.ref_text:
++        note += "; ref_text нет → xvec_only (клон бледнее)"
++    _vram_peak_gb(reset=True)
++    _log(f"qwen3: загружаю {ctx.args.qwen3_model}...")
++    model = FasterQwen3TTS.from_pretrained(ctx.args.qwen3_model)
++    model.warmup(prefill_len=100)
++    for pid, text in ctx.phrases:
++        kwargs: dict[str, Any] = {"language": "Russian", "ref_audio": str(ctx.ref)}
++        if ctx.ref_text:
++            kwargs["ref_text"] = ctx.ref_text
++        else:
++            kwargs["xvec_only"] = True
++        t0 = time.perf_counter()
++        audios, sr = model.generate_voice_clone(text=text, **kwargs)
++        gen = time.perf_counter() - t0
++        audio = audios[0] if isinstance(audios, (list, tuple)) else audios
++        out = ctx.run_dir / f"qwen3_{pid}.wav"
++        sf.write(out, audio, sr)
++        dur = len(audio) / sr
++        ctx.files.append({"engine": "qwen3", "phrase_id": pid, "file": out.name,
++                          "sample_rate": sr, "audio_sec": round(dur, 2),
++                          "gen_sec": round(gen, 2), "rtf": round(dur / gen, 2) if gen else None})
++        _log(f"qwen3/{pid}: {dur:.1f}с аудио за {gen:.1f}с (RTF {dur / gen:.2f})")
++    ctx.engines["qwen3"] = {"status": "ok", "note": note,
++                            "pkg": _package_version("faster-qwen3-tts"),
++                            "vram_peak_gb": _vram_peak_gb()}
++
++
++def bake_xtts(ctx: BakeContext) -> None:
++    """Референс «как у Нейроны» (NEURONA_NOTES §3.4): Coqui XTTS v2."""
++    from TTS.api import Tts
++
++    device = "cpu"
++    try:
++        import torch
++
++        device = "cuda" if torch.cuda.is_available() else "cpu"
++    except ImportError:
++        pass
++    _vram_peak_gb(reset=True)
++    _log(f"xtts: загружаю {ctx.args.xtts_model} на {device}...")
++    tts = Tts(ctx.args.xtts_model).to(device)
++    for pid, text in ctx.phrases:
++        out = ctx.run_dir / f"xtts_{pid}.wav"
++        t0 = time.perf_counter()
++        tts.tts_to_file(text=text, speaker_wav=str(ctx.ref), language="ru",
++                        file_path=str(out))
++        gen = time.perf_counter() - t0
++        dur, sr = wav_duration(out)
++        ctx.files.append({"engine": "xtts", "phrase_id": pid, "file": out.name,
++                          "sample_rate": sr, "audio_sec": round(dur, 2) if dur else None,
++                          "gen_sec": round(gen, 2),
++                          "rtf": round(dur / gen, 2) if dur and gen else None})
++        _log(f"xtts/{pid}: {gen:.1f}с генерация")
++    ctx.engines["xtts"] = {"status": "ok", "note": f"model={ctx.args.xtts_model}, device={device}",
++                           "pkg": _package_version("coqui-tts") or _package_version("TTS"),
++                           "vram_peak_gb": _vram_peak_gb()}
++
++
++def bake_cosyvoice3(ctx: BakeContext) -> None:
++    """CosyVoice 3: запускать ВНУТРИ их conda-окружения (py3.10). API — example.py их репо."""
++    import os
++
++    if not ctx.ref_text:
++        raise RuntimeError("cosyvoice3: нужен --ref-text (JP-транскрипция) — "
++                           "inference_zero_shot без prompt_text не клонирует")
++    repo = Path(ctx.args.cosyvoice_repo or os.environ.get("COSYVOICE_REPO") or ".").resolve()
++    matcha = repo / "third_party" / "Matcha-TTS"
++    if matcha.is_dir() and str(matcha) not in sys.path:
++        sys.path.append(str(matcha))
++    import torch  # noqa: PLC0415
++    import torchaudio  # noqa: PLC0415
++    from cosyvoice.cli.cosyvoice import AutoModel  # noqa: PLC0415 — их окружение
++
++    _vram_peak_gb(reset=True)
++    _log(f"cosyvoice3: AutoModel({ctx.args.cosyvoice_model})...")
++    model = AutoModel(model_dir=ctx.args.cosyvoice_model)
++    prompt = "You are a helpful assistant.<|endofprompt|>" + ctx.ref_text
++    sr = getattr(model, "sample_rate", 24000)
++    for pid, text in ctx.phrases:
++        out = ctx.run_dir / f"cosyvoice3_{pid}.wav"
++        t0 = time.perf_counter()
++        parts = [j["tts_speech"] for j in model.inference_zero_shot(
++            text, prompt, str(ctx.ref), stream=False)]
++        gen = time.perf_counter() - t0
++        wav_tensor = torch.cat(parts, dim=-1) if len(parts) > 1 else parts[0]
++        torchaudio.save(str(out), wav_tensor, sr)
++        dur = wav_tensor.shape[-1] / sr
++        ctx.files.append({"engine": "cosyvoice3", "phrase_id": pid, "file": out.name,
++                          "sample_rate": sr, "audio_sec": round(dur, 2),
++                          "gen_sec": round(gen, 2), "rtf": round(dur / gen, 2) if gen else None})
++        _log(f"cosyvoice3/{pid}: {dur:.1f}с аудио за {gen:.1f}с (RTF {dur / gen:.2f})")
++    ctx.engines["cosyvoice3"] = {"status": "ok",
++                                 "note": f"model_dir={ctx.args.cosyvoice_model}, repo={repo}",
++                                 "vram_peak_gb": _vram_peak_gb()}
++
++
++def bake_fish(ctx: BakeContext) -> None:
++    """Fish Audio S2: документированный CLI-пайплайн (dac → text2semantic → dac).
++
++    ВНИМАНИЕ: их дока рекомендует ≥24GB VRAM для S2-Pro (4B). На 12GB — только
++    с --fish-half и без гарантий; OOM/падение → статус failed в манифесте, bake-off
++    продолжается остальными. Скрипты зовём subprocess'ом из их чекаута (PYTHONPATH=repo),
++    выходные файлы — в нашем run-dir.
++    """
++    import os
++
++    if not ctx.ref_text:
++        raise RuntimeError("fish: нужен --ref-text (JP-транскрипция) для --prompt-text")
++    repo = Path(ctx.args.fish_repo or os.environ.get("FISH_REPO") or ".").resolve()
++    dac = repo / "fish_speech" / "models" / "dac" / "inference.py"
++    t2s = repo / "fish_speech" / "models" / "text2semantic" / "inference.py"
++    codec_ckpt = repo / ctx.args.fish_checkpoints / "codec.pth"
++    for required, hint in ((dac, "dac/inference.py"), (t2s, "text2semantic/inference.py")):
++        if not required.is_file():
++            raise RuntimeError(f"fish: в чекауте {repo} нет {hint} — поставь fish-speech "
++                               "и веса (hf download fishaudio/s2-pro --local-dir "
++                               f"{ctx.args.fish_checkpoints}); дока: ≥24GB VRAM!")
++    env = {**os.environ, "PYTHONPATH": str(repo)}
++    work = ctx.run_dir / "_fish_work"
++    work.mkdir(exist_ok=True)
++
++    def run_cli(cmd: list[str], cwd: Path, what: str) -> None:
++        _log(f"fish: {what}...")
++        proc = subprocess.run(cmd, cwd=str(cwd), env=env, capture_output=True, text=True)
++        if proc.returncode != 0:
++            tail = (proc.stderr or proc.stdout or "").strip()[-500:]
++            raise RuntimeError(f"fish: {what} → код {proc.returncode}: {tail}")
++
++    # шаг 1: VQ-токены референса (один раз на прогон)
++    t0 = time.perf_counter()
++    run_cli([sys.executable, str(dac), "-i", str(ctx.ref.resolve()),
++             "--checkpoint-path", str(codec_ckpt)], work, "кодек-токены референса")
++    ref_tokens = work / "fake.npy"
++    if not ref_tokens.is_file():
++        raise RuntimeError(f"fish: {ref_tokens} не появился после шага 1")
++    ref_prep = time.perf_counter() - t0
++
++    for pid, text in ctx.phrases:
++        phrase_dir = work / f"p_{pid}"
++        phrase_dir.mkdir(exist_ok=True)
++        shutil.copyfile(ref_tokens, phrase_dir / "prompt.npy")
++        t2s_cmd = [sys.executable, str(t2s), "--text", text,
++                   "--prompt-text", ctx.ref_text, "--prompt-tokens", "prompt.npy"]
++        if ctx.args.fish_half:
++            t2s_cmd.append("--half")
++        t0 = time.perf_counter()
++        run_cli(t2s_cmd, phrase_dir, f"text2semantic/{pid}")
++        codes = phrase_dir / "codes_0.npy"
++        if not codes.is_file():
++            raise RuntimeError(f"fish: codes_0.npy не появился для {pid}")
++        run_cli([sys.executable, str(dac), "-i", "codes_0.npy",
++                 "--checkpoint-path", str(codec_ckpt)], phrase_dir, f"вокодер/{pid}")
++        gen = time.perf_counter() - t0
++        baked = phrase_dir / "fake.wav"
++        if not baked.is_file():
++            raise RuntimeError(f"fish: fake.wav не появился для {pid}")
++        out = ctx.run_dir / f"fish_{pid}.wav"
++        shutil.move(str(baked), str(out))
++        dur, sr = wav_duration(out)
++        ctx.files.append({"engine": "fish", "phrase_id": pid, "file": out.name,
++                          "sample_rate": sr, "audio_sec": round(dur, 2) if dur else None,
++                          "gen_sec": round(gen, 2),
++                          "rtf": round(dur / gen, 2) if dur and gen else None})
++        _log(f"fish/{pid}: готово за {gen:.1f}с")
++    ctx.engines["fish"] = {"status": "ok",
++                           "note": f"repo={repo}, ckpt={ctx.args.fish_checkpoints}, "
++                                   f"half={bool(ctx.args.fish_half)}, ref_prep_sec={round(ref_prep, 1)}",
++                           "vram_peak_gb": _vram_peak_gb()}
++
++
++ENGINE_ADAPTERS: dict[str, Callable[[BakeContext], None]] = {
++    "cosyvoice3": bake_cosyvoice3,
++    "fish": bake_fish,
++    "xtts": bake_xtts,
++    "qwen3": bake_qwen3,
++}
++ENGINE_ORDER = ["cosyvoice3", "fish", "xtts", "qwen3"]
++
++
++# --------------------------------------------------------------------------- #
++# Манифест, blind-раскладка, раннер                                           #
++# --------------------------------------------------------------------------- #
++def load_manifest(run_dir: Path) -> dict[str, Any]:
++    import yaml
++
++    manifest_path = run_dir / "manifest.yaml"
++    if manifest_path.is_file():
++        return yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
++    return {}
++
++
++def save_manifest(ctx: BakeContext) -> None:
++    import yaml
++
++    existing = load_manifest(ctx.run_dir)
++    engines = {**(existing.get("engines") or {}), **ctx.engines}
++    known = {(f.get("engine"), f.get("phrase_id")) for f in ctx.files}
++    files = [f for f in (existing.get("files") or [])
++             if (f.get("engine"), f.get("phrase_id")) not in known] + ctx.files
++    manifest = {
++        "created": existing.get("created") or datetime.now().isoformat(timespec="seconds"),
++        "updated": datetime.now().isoformat(timespec="seconds"),
++        "ref": str(ctx.ref),
++        "ref_text": ctx.ref_text,
++        "ref_text_source": ctx.ref_text_source,
++        "phrases": [{"id": pid, "text": text} for pid, text in ctx.phrases],
++        "engines": engines,
++        "files": files,
++    }
++    if existing.get("blind"):
++        manifest["blind"] = existing["blind"]  # пересоберётся при --blind
++    (ctx.run_dir / "manifest.yaml").write_text(
++        yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False), encoding="utf-8")
++
++
++def make_blind(run_dir: Path, seed: int) -> dict[str, Any]:
++    """Слепая раскладка: B##.wav вперемешку + blind_key.yaml (ключ — после оценок!)."""
++    import yaml
++
++    manifest = load_manifest(run_dir)
++    files = [f for f in (manifest.get("files") or []) if (run_dir / f["file"]).is_file()]
++    if not files:
++        raise SystemExit("[bakeoff] в манифесте нет файлов — нечего ослеплять")
++    rng = random.Random(seed)
++    order = sorted(files, key=lambda f: (f["engine"], f["phrase_id"]))
++    rng.shuffle(order)
++    blind_dir = run_dir / "blind"
++    if blind_dir.exists():
++        shutil.rmtree(blind_dir)
++    blind_dir.mkdir(parents=True)
++    key: list[dict[str, str]] = []
++    for i, entry in enumerate(order, 1):
++        code = f"B{i:02d}"
++        shutil.copyfile(run_dir / entry["file"], blind_dir / f"{code}.wav")
++        key.append({"code": code, "engine": entry["engine"],
++                    "phrase_id": entry["phrase_id"], "file": entry["file"]})
++    info = {"seed": seed, "created": datetime.now().isoformat(timespec="seconds"),
++            "count": len(key), "key": key}
++    (run_dir / "blind_key.yaml").write_text(
++        yaml.safe_dump(info, allow_unicode=True, sort_keys=False), encoding="utf-8")
++    manifest["blind"] = {"enabled": True, "seed": seed, "count": len(key),
++                         "dir": "blind", "key_file": "blind_key.yaml"}
++    (run_dir / "manifest.yaml").write_text(
++        yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False), encoding="utf-8")
++    _log(f"blind: {len(key)} файлов в {blind_dir} (ключ: blind_key.yaml — не открывать до оценок!)")
++    return manifest["blind"]
++
++
++def bake(ctx: BakeContext) -> None:
++    wanted = ENGINE_ORDER if ctx.args.engine == "all" else [ctx.args.engine]
++    for engine in wanted:
++        adapter = ENGINE_ADAPTERS[engine]
++        _log(f"=== {engine} ===")
++        try:
++            adapter(ctx)
++        except ImportError as exc:
++            ctx.engines[engine] = {"status": "skipped",
++                                   "reason": f"не установлен в этом окружении: {exc}"}
++            _log(f"{engine}: SKIP — {exc}")
++        except Exception as exc:  # noqa: BLE001 — один сгоревший кандидат не срывает bake-off
++            ctx.engines[engine] = {"status": "failed", "reason": str(exc)[:500]}
++            _log(f"{engine}: FAILED — {exc}")
++        save_manifest(ctx)
++
++
++def main(argv: list[str] | None = None) -> int:
++    args = build_parser().parse_args(argv)
++    run_dir = Path(args.run_dir) if args.run_dir else \
++        Path(args.outdir_root) / f"bake_{datetime.now():%Y%m%d_%H%M%S}"
++
++    if args.blind_only:
++        if not run_dir.is_dir():
++            raise SystemExit(f"[bakeoff] run-dir не найден: {run_dir}")
++        make_blind(run_dir, args.blind_seed)
++        return 0
++
++    ref = Path(args.ref)
++    if not ref.is_file():
++        raise SystemExit(f"[bakeoff] референс не найден: {ref} "
++                         "(ждём JP-запись ~8–9 с; положи рядом <имя>.txt с транскрипцией)")
++    ref_text, ref_text_source = resolve_ref_text(args, ref)
++    if ref_text is None:
++        _log("ВНИМАНИЕ: JP-транскрипция референса не найдена — qwen3 уйдёт в xvec_only, "
++             "cosyvoice3/fish будут пропущены (xtts работает без транскрипции)")
++    phrases = parse_text_file(args.text_file) if args.text_file else list(DEFAULT_PHRASES)
++    if not phrases:
++        raise SystemExit("[bakeoff] пустой набор фраз")
++
++    run_dir.mkdir(parents=True, exist_ok=True)
++    ctx = BakeContext(args=args, ref=ref, ref_text=ref_text,
++                      ref_text_source=ref_text_source, phrases=phrases, run_dir=run_dir)
++    _log(f"run-dir: {run_dir.resolve()} · фраз: {len(phrases)} · референс: {ref}")
++    bake(ctx)
++    if args.blind:
++        make_blind(run_dir, args.blind_seed)
++
++    ok = [e for e, info in ctx.engines.items() if info.get("status") == "ok"]
++    skipped = [e for e, info in ctx.engines.items() if info.get("status") != "ok"]
++    _log(f"готово: испеклось {ok or 'ничего'}; skip/fail: {skipped or '—'}")
++    _log(f"дальше: прослушать {run_dir} (или --blind), цифры — в manifest.yaml, "
++         "вердикт — в ревизию ADR-027")
++    return 0 if ok or not skipped else 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/lilith/tests/test_voice_bakeoff.py b/lilith/tests/test_voice_bakeoff.py
+new file mode 100644
+index 0000000..3935955
+--- /dev/null
++++ b/lilith/tests/test_voice_bakeoff.py
+@@ -0,0 +1,234 @@
++"""Гварды scripts/voice_bakeoff.py (ревизия ADR-027, Q-B): CLI-контракт, фразы-ловушки,
++манифест, слепая раскладка, честные skip/fail кандидатов.
++
++Движки и GPU не нужны: адаптеры инжектятся фейками (ENGINE_ADAPTERS — точка подмены,
++как _engine в ZeroShotTTS). Тяжёлые импорты в скрипте ленивые — контракт модуля.
++"""
++
++from __future__ import annotations
++
++import importlib.util
++import sys
++from pathlib import Path
++
++import pytest
++import yaml
++
++from lilith_core.voice.stt import write_wav
++
++PROJECT_ROOT = Path(__file__).resolve().parents[1]
++SCRIPT = PROJECT_ROOT / "scripts" / "voice_bakeoff.py"
++
++
++@pytest.fixture(scope="module")
++def vb():
++    spec = importlib.util.spec_from_file_location("lilith_voice_bakeoff", SCRIPT)
++    module = importlib.util.module_from_spec(spec)
++    # dataclasses резолвит строковые аннотации через sys.modules — без регистрации
++    # модуля @dataclass при загрузке из файла падает (AttributeError в _is_type).
++    sys.modules[spec.name] = module
++    try:
++        spec.loader.exec_module(module)
++        yield module
++    finally:
++        sys.modules.pop(spec.name, None)
++
++
++def make_ref(tmp_path: Path, with_text: bool = True) -> Path:
++    ref = tmp_path / "LilithGolos.wav"
++    ref.write_bytes(write_wav(b"\x00\x00" * 4800, 24000))
++    if with_text:
++        ref.with_suffix(".txt").write_text("こんにちは、キリushа。", encoding="utf-8")
++    return ref
++
++
++class TestParser:
++    def test_defaults(self, vb) -> None:
++        args = vb.build_parser().parse_args([])
++        assert args.engine == "all"
++        assert args.ref == "voices/bakeoff/LilithGolos.wav"  # JP-референс из директивы Q-B
++        assert args.blind is False and args.blind_only is False
++        assert args.blind_seed == vb.DEFAULT_BLIND_SEED
++        assert "Fun-CosyVoice3" in args.cosyvoice_model
++        assert args.fish_checkpoints == "checkpoints/s2-pro"
++        assert "xtts_v2" in args.xtts_model
++        assert "0.6B-Base" in args.qwen3_model
++
++    def test_engine_choices_are_the_qb_candidates(self, vb) -> None:
++        """Кандидаты — ровно из директивы Q-B: CosyVoice 3, Fish S2, XTTS v2, qwen3-контроль."""
++        assert vb.ENGINE_ORDER == ["cosyvoice3", "fish", "xtts", "qwen3"]
++        assert set(vb.ENGINE_ADAPTERS) == set(vb.ENGINE_ORDER)
++        with pytest.raises(SystemExit):
++            vb.build_parser().parse_args(["--engine", "rvc"])  # RVC — слой 2-й очереди (Q-C)
++
++
++class TestPhrases:
++    def test_four_categories_with_traps(self, vb) -> None:
++        ids = [pid for pid, _ in vb.DEFAULT_PHRASES]
++        assert ids == ["neutral", "emotional", "tongue_twister", "intimate"]
++        text = " ".join(t for _, t in vb.DEFAULT_PHRASES)
++        assert "Кирюша" in text          # ловушка ударения из полевого вердикта («КирюхА»)
++        assert "Саша" in text and "сушк" in text  # скороговорка
++        assert all(len(t) > 30 for _, t in vb.DEFAULT_PHRASES)
++        assert len(set(ids)) == len(ids)
++
++    def test_parse_text_file(self, vb, tmp_path: Path) -> None:
++        tf = tmp_path / "phrases.txt"
++        tf.write_text("# комментарий\n\nfirst|Первая фраза.\nВторая просто так.\n",
++                      encoding="utf-8")
++        parsed = vb.parse_text_file(tf)
++        # id «lineN» = реальный номер строки в файле (комментарии/пустые считаются)
++        assert parsed == [("first", "Первая фраза."), ("line4", "Вторая просто так.")]
++
++
++class TestRefText:
++    def test_sibling_txt(self, vb, tmp_path: Path) -> None:
++        ref = make_ref(tmp_path)
++        args = vb.build_parser().parse_args(["--ref", str(ref)])
++        text, source = vb.resolve_ref_text(args, ref)
++        assert text and text.startswith("こんにちは") and source.startswith("file:")
++
++    def test_inline_override(self, vb, tmp_path: Path) -> None:
++        ref = make_ref(tmp_path)
++        args = vb.build_parser().parse_args(["--ref", str(ref), "--ref-text", "インライン"])
++        text, source = vb.resolve_ref_text(args, ref)
++        assert text == "インライン" and source == "inline"
++
++    def test_missing(self, vb, tmp_path: Path) -> None:
++        ref = make_ref(tmp_path, with_text=False)
++        args = vb.build_parser().parse_args(["--ref", str(ref)])
++        text, source = vb.resolve_ref_text(args, ref)
++        assert text is None and source == "missing"
++
++
++class TestWavDuration:
++    def test_real_wav(self, vb, tmp_path: Path) -> None:
++        path = tmp_path / "a.wav"
++        path.write_bytes(write_wav(b"\x00\x00" * 24000, 24000))  # 1 секунда
++        dur, sr = vb.wav_duration(path)
++        assert sr == 24000 and dur == pytest.approx(1.0, abs=0.01)
++
++    def test_garbage_returns_none(self, vb, tmp_path: Path) -> None:
++        path = tmp_path / "bad.wav"
++        path.write_bytes("не wav совсем".encode())
++        dur, sr = vb.wav_duration(path)
++        assert dur is None and sr is None
++
++
++# --------------------------------------------------------------------------- #
++# Выпечка на фейковых адаптерах                                               #
++# --------------------------------------------------------------------------- #
++def fake_ok_factory(engine_files: dict[str, list[str]]):
++    """Фабрика фейк-адаптеров: пишет wav'ы и append'ит ctx.files как настоящий."""
++
++    def make(pid_suffix: str):
++        def adapter(ctx) -> None:
++            engine = pid_suffix
++            for pid, _text in ctx.phrases:
++                out = ctx.run_dir / f"{engine}_{pid}.wav"
++                out.write_bytes(write_wav(b"\x01\x00" * 2400, 24000))
++                ctx.files.append({"engine": engine, "phrase_id": pid, "file": out.name,
++                                  "sample_rate": 24000, "audio_sec": 0.1,
++                                  "gen_sec": 0.05, "rtf": 2.0})
++            ctx.engines[engine] = {"status": "ok", "note": "fake"}
++        return adapter
++
++    return {name: make(name) for name in engine_files}
++
++
++class TestBake:
++    def test_ok_skip_fail_and_manifest(self, vb, tmp_path: Path, monkeypatch) -> None:
++        ref = make_ref(tmp_path)
++        fakes = fake_ok_factory({"xtts": []})
++
++        def broken_import(ctx) -> None:
++            raise ImportError("нет движка в этом окружении")
++
++        def broken_runtime(ctx) -> None:
++            raise RuntimeError("OOM на 12GB (S2-Pro хочет 24GB)")
++
++        monkeypatch.setitem(vb.ENGINE_ADAPTERS, "xtts", fakes["xtts"])
++        monkeypatch.setitem(vb.ENGINE_ADAPTERS, "cosyvoice3", broken_import)
++        monkeypatch.setitem(vb.ENGINE_ADAPTERS, "fish", broken_runtime)
++        monkeypatch.setitem(vb.ENGINE_ADAPTERS, "qwen3", broken_import)
++
++        code = vb.main(["--engine", "all", "--ref", str(ref),
++                        "--run-dir", str(tmp_path / "run1")])
++        assert code == 0  # хотя бы один испёкся — bake-off состоялся
++        run = tmp_path / "run1"
++        manifest = yaml.safe_load((run / "manifest.yaml").read_text(encoding="utf-8"))
++        assert manifest["engines"]["xtts"]["status"] == "ok"
++        assert manifest["engines"]["cosyvoice3"]["status"] == "skipped"
++        assert "не установлен" in manifest["engines"]["cosyvoice3"]["reason"]
++        assert manifest["engines"]["fish"]["status"] == "failed"
++        assert "OOM" in manifest["engines"]["fish"]["reason"]
++        files = manifest["files"]
++        assert len(files) == 4  # xtts × 4 фразы
++        assert {f["phrase_id"] for f in files} == {"neutral", "emotional",
++                                                   "tongue_twister", "intimate"}
++        assert all((run / f["file"]).is_file() for f in files)
++        assert manifest["ref_text"] and manifest["phrases"][0]["id"] == "neutral"
++
++    def test_all_failed_exit_code(self, vb, tmp_path: Path, monkeypatch) -> None:
++        ref = make_ref(tmp_path)
++
++        def nope(ctx) -> None:
++            raise ImportError("nothing here")
++
++        for engine in vb.ENGINE_ORDER:
++            monkeypatch.setitem(vb.ENGINE_ADAPTERS, engine, nope)
++        code = vb.main(["--engine", "all", "--ref", str(ref),
++                        "--run-dir", str(tmp_path / "run2")])
++        assert code == 1  # ни один кандидат не испёкся — красный выход
++
++    def test_manifest_merge_on_rerun(self, vb, tmp_path: Path, monkeypatch) -> None:
++        """Второй прогон в тот же run-dir (другое окружение) — манифест дополняется."""
++        ref = make_ref(tmp_path)
++        run = tmp_path / "run3"
++        fakes = fake_ok_factory({"xtts": [], "qwen3": []})
++        monkeypatch.setitem(vb.ENGINE_ADAPTERS, "xtts", fakes["xtts"])
++        vb.main(["--engine", "xtts", "--ref", str(ref), "--run-dir", str(run)])
++        monkeypatch.setitem(vb.ENGINE_ADAPTERS, "qwen3", fakes["qwen3"])
++        vb.main(["--engine", "qwen3", "--ref", str(ref), "--run-dir", str(run)])
++        manifest = yaml.safe_load((run / "manifest.yaml").read_text(encoding="utf-8"))
++        assert set(manifest["engines"]) == {"xtts", "qwen3"}
++        assert len(manifest["files"]) == 8  # 2 движка × 4 фразы, без дублей
++
++    def test_missing_ref_exits(self, vb, tmp_path: Path) -> None:
++        with pytest.raises(SystemExit, match="референс не найден"):
++            vb.main(["--ref", str(tmp_path / "ghost.wav"),
++                     "--run-dir", str(tmp_path / "run4")])
++
++
++class TestBlind:
++    def test_blind_layout_and_key(self, vb, tmp_path: Path, monkeypatch) -> None:
++        ref = make_ref(tmp_path)
++        run = tmp_path / "run5"
++        fakes = fake_ok_factory({"xtts": [], "qwen3": []})
++        monkeypatch.setitem(vb.ENGINE_ADAPTERS, "xtts", fakes["xtts"])
++        monkeypatch.setitem(vb.ENGINE_ADAPTERS, "qwen3", fakes["qwen3"])
++        vb.main(["--engine", "xtts", "--ref", str(ref), "--run-dir", str(run)])
++        vb.main(["--engine", "qwen3", "--ref", str(ref), "--run-dir", str(run)])
++        vb.main(["--blind-only", "--run-dir", str(run), "--blind-seed", "42"])
++
++        blind = run / "blind"
++        codes = sorted(p.stem for p in blind.glob("B*.wav"))
++        assert codes == [f"B{i:02d}" for i in range(1, 9)]
++        key = yaml.safe_load((run / "blind_key.yaml").read_text(encoding="utf-8"))
++        assert key["seed"] == 42 and key["count"] == 8
++        assert {(e["engine"], e["phrase_id"]) for e in key["key"]} == {
++            (eng, pid) for eng in ("xtts", "qwen3")
++            for pid in ("neutral", "emotional", "tongue_twister", "intimate")
++        }
++        # детерминизм: тот же seed — та же раскладка
++        before = [(e["code"], e["file"]) for e in key["key"]]
++        vb.main(["--blind-only", "--run-dir", str(run), "--blind-seed", "42"])
++        key2 = yaml.safe_load((run / "blind_key.yaml").read_text(encoding="utf-8"))
++        assert [(e["code"], e["file"]) for e in key2["key"]] == before
++
++    def test_blind_only_without_files_exits(self, vb, tmp_path: Path) -> None:
++        run = tmp_path / "empty_run"
++        run.mkdir()
++        (run / "manifest.yaml").write_text("files: []\n", encoding="utf-8")
++        with pytest.raises(SystemExit, match="нечего ослеплять"):
++            vb.main(["--blind-only", "--run-dir", str(run)])
+-- 
+2.39.5
+
+From 2351f19a8b5e5e2b820e5a48b163f700e71534e6 Mon Sep 17 00:00:00 2001
+From: Lilith-Builder <lilith-builder@lilith.local>
+Date: Thu, 8 Oct 2026 13:26:23 +0000
+Subject: [PATCH 2/3] =?UTF-8?q?docs(voice):=20=D0=BF=D0=BE=D0=BB=D0=B5?=
+ =?UTF-8?q?=D0=B2=D0=BE=D0=B5=2005=E2=80=9308.10=20=E2=80=94=20=D1=80?=
+ =?UTF-8?q?=D0=B5=D1=88=D0=B5=D0=BD=D0=B8=D0=B5=20=C2=ABVD=20=D1=81=D0=B5?=
+ =?UTF-8?q?=D0=B9=D1=87=D0=B0=D1=81,=20RVC=20=D0=BF=D0=BE=D1=82=D0=BE?=
+ =?UTF-8?q?=D0=BC=C2=BB,=20=D0=BE=D1=82=D0=BB=D0=BE=D0=B6=D0=B5=D0=BD?=
+ =?UTF-8?q?=D0=BD=D1=8B=D0=B9=20=D0=B3=D0=BE=D0=BB=D0=BE=D1=81=20=D0=B2=20?=
+ =?UTF-8?q?=D0=BE=D1=87=D0=B5=D1=80=D0=B5=D0=B4=D1=8C,=20XTTS-=D0=B4=D0=BE?=
+ =?UTF-8?q?=D0=B2=D0=BE=D0=B4=D0=BA=D0=B0=20=D1=81=D1=82=D0=B5=D0=BD=D0=B4?=
+ =?UTF-8?q?=D0=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Отчёт Архитектора 08.10.2026 (через Курьера) исполнен по трём просьбам:
+
+(а) ОТЛОЖЕННЫЙ ГОЛОС зафиксирован так, что переживёт любое падение логов:
+* docs/DECISIONS.md — поправка ADR-027 от 08.10.2026 (ратифицирована):
+  рабочая база СЕЙЧАС = Qwen3-TTS VoiceDesign чистый RU; душа выбрана ухом
+  Курьера — preview_03_seed1348810977 (прогон 05.10); прод = штатный
+  design-then-clone ADR-027 §4: резидент 0.6B-Base на чистом синтетическом
+  клоне VD-базы; 1.7B-VoiceDesign остаётся офлайн-цехом (бюджет ADR-028).
+  Клон с живого JP-референса + RVC-пост-фильтр — ОТЛОЖЕНЫ в 0.7.1/0.8.0.
+  Полевые данные записаны фактами: VD-RU чисто/стабильно 6–8 с, просодия
+  плоская (→ «платья»); VD-JP выразительно; клон JP→RU — тембр «огонь»,
+  но галлюцинация «ворона» (акустическое заземление BGM-шума референса) и
+  авторегрессионный дрифт ~50 с (короткие реплики 2–5 с чисты — наш стрим
+  режет короче). Bake-off НЕ отменён — отложен, держим готовым.
+* HANDOVER §6 — очередь 0.7.1/0.8.0: VD-платья (директива готовится),
+  нонвербалика в WS, XTTS-забеги, отложенный голос (JP-клон + RVC) отдельным
+  пунктом «не потерять».
+* RELEASE_0.7.0.md §9 — полевой журнал 05–08.10 + шаги усыновления базы
+  (--adopt 3 --verify-clone → default_voice: lilith-soul горячо) + XTTS-рецепт
+  замороженного окружения (coqui-tts 0.27.5 форк; sdist tts==0.22.0 на Win
+  несобираем — numpy2 + C1083 pyconfig.h; окно transformers 4.57.x;
+  torchaudio CPU 2.6.0 к torch 2.6.0+cu124; веса с ModelScope
+  AI-ModelScope/XTTS-v2 без speakers.json → пустой {}; легаси-загрузчик
+  игнорирует HF_ENDPOINT → прямая инициализация TTS(model_path=…); CPML
+  non-commercial — согласие принято).
+* CHANGELOG 0.7.0 — блок «Поле 05–08.10».
+
+(б) bake-off-стенд держим готовым + доводка по полевому рецепту:
+* scripts/voice_bakeoff.py — прямая инициализация XTTS локальными весами
+  (--xtts-model-path/--xtts-config-path/--xtts-vocab-path): обход легаси-
+  загрузчика (requests → us.aws.cdn.hf.co, мёртв), note в манифесте.
+* Гвард CLI расширен (без изменения счётчика: 1145 passed, 2 skipped в доках).
+
+(в) проект директивы «VD-платья» (voice_preview со стилевыми описаниями
+поверх чистой RU-базы) — у Строителя в мастерской, ждёт утверждения
+Архитектором; в репо поедет реализацией в 0.7.1-b.
+
+Тесты: 1137 passed / 10 skipped в песочнице Строителя (на машине Курьера
+штатно 1145 + 2); ruff чисто; счётчик в доках не изменился.
+---
+ HANDOVER.md                        | 31 +++++++++++-----
+ lilith/CHANGELOG.md                | 16 ++++++++
+ lilith/RELEASE_0.7.0.md            | 59 ++++++++++++++++++++++++++++++
+ lilith/docs/DECISIONS.md           | 42 +++++++++++++++++++++
+ lilith/scripts/voice_bakeoff.py    | 31 +++++++++++++---
+ lilith/tests/test_voice_bakeoff.py |  3 ++
+ 6 files changed, 167 insertions(+), 15 deletions(-)
+
+diff --git a/HANDOVER.md b/HANDOVER.md
+index 449a203..92e79f4 100644
+--- a/HANDOVER.md
++++ b/HANDOVER.md
+@@ -151,16 +151,27 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+ 1. **Замер Е (0.6.7, окно-питомец) у Кирюши** — в его темпе; голосовая ветка
+    `feat/voice-qwen3` с 0.6.7 по файлам не пересекается (voice/, scripts/, config vs окно/хоткеи).
+    После Е: пуш 0.6.7 + тег → ребейз голоса → мерж → Замер Ж (RELEASE_0.7.0.md §5).
+-2. **Замер Ж (голос)**: Ж0 бенчмарк 3060 → Ж1 усыновление душ (Лилит, Оля) → Ж2/Ж3 латентность
+-   → Ж4 VRAM-сожительство → Ж5 фолбэк → Ж6 тесты. **Ж0 снят (RTF 2.09 / TTFA 403 мс /
+-   VRAM 5.2 ГБ); полевой вердикт: qwen3 для RU — не корона (поправка ADR-027 от 28.09).**
+-   Ж1 идёт как bake-off короны: `scripts/voice_bakeoff.py` (CosyVoice 3 / Fish S2 /
+-   XTTS v2 / qwen3-контроль), слепое прослушивание Архитектором, маршрут — RELEASE_0.7.0.md §8;
+-   цифры Ж4 — на победителе bake-off; поправка бюджета ADR-028 уже внесена (TTS-класс 4.5–5.5 ГБ).
+-3. **0.7.1-кандидаты**: проводка нонвербальных тегов в WS-протокол (по итогам Ж1-а),
+-   персистенция переодевания движка в runtime_settings.json, вынос TTS в процесс
+-   (`faster-qwen3-tts serve`) при тесноте Ж4, реализации CosyVoice 2 / Fish Speech для шкафа.
+-4. **Душа Оли**: персоны `olya` в `personas/` ещё нет (есть `_template` и `lilith`) —
++2. **Замер Ж (голос) — статус 08.10**: Ж0 снят (RTF 2.09 / TTFA 403 мс / VRAM 5.2 ГБ).
++   Решение по короне 08.10 (поправка ADR-027 от 08.10, ратифицировано): **«VD сейчас,
++   RVC потом»** — рабочая база = Qwen3-TTS Voice Design чистый RU, душа =
++   `preview_03_seed1348810977` (выбрана ухом Курьера 05.10); прод = резидент 0.6B-Base
++   на её чистом синтетическом клоне: `--adopt 3 --verify-clone` → `default_voice:
++   lilith-soul` (горячо). Bake-off-стенд — **отложен (не отменён)**, готов
++   (`scripts/voice_bakeoff.py`). Осталось: Ж2/Ж3 (латентность), Ж4 (VRAM-сожительство),
++   Ж5 (фолбэк), Ж6 (тесты) → тег `v0.7.0`. Полевой журнал и шаги усыновления —
++   RELEASE_0.7.0.md §9.
++3. **Очередь 0.7.1**: (а) **VD-платья** — стилевые описания (эмоции) поверх чистой
++   RU-базы; проект директивы у Строителя, ждёт утверждения Архитектором;
++   (б) проводка нонвербальных тегов в WS-протокол (+ эксперимент Q7-а с тегами);
++   (в) XTTS-забеги по рецепту замороженного окружения (RELEASE §9.4);
++   (г) персистенция переодевания движка в runtime_settings.json;
++   (д) при тесноте Ж4 — вынос TTS в процесс (`faster-qwen3-tts serve`).
++4. **ОТЛОЖЕННЫЙ ГОЛОС (0.7.1/0.8.0 — не потерять; просьба Архитектора 08.10)**:
++   клон-база с живого JP-референса (LilithGolos.wav + точная транскрипция; поле:
++   тембр/эмоции «огонь», но галлюцинация «ворона» на BGM-заземлении и авторегрессионный
++   дрифт ~50 с) + **RVC-пост-фильтр** (вторая очередь Q-C — фиксация тембра). Порядок:
++   сперва платья на VD-базе, затем RVC поверх отложенного клона, если тембр плывёт.
++5. **Душа Оли**: персоны `olya` в `personas/` ещё нет (есть `_template` и `lilith`) —
+    заведём карточку, когда Курьер выберет душу в voice_preview (`--persona olya` уже работает).
+ 5. **Headless-проба по исходникам UniVRM** — не строим. Триггер постройки (решение
+    архитектора): замер зависнет на фазе 1 или фазе 4 при `Use Immediate Await Caller = ✅`.
+diff --git a/lilith/CHANGELOG.md b/lilith/CHANGELOG.md
+index 621b4ce..e87a0e2 100644
+--- a/lilith/CHANGELOG.md
++++ b/lilith/CHANGELOG.md
+@@ -64,6 +64,22 @@
+   в поправке). Fish: Research License + ≥24 ГБ VRAM по доке — на 12 ГБ только S1-mini-класс.
+ * Инструкция и команды установки кандидатов — `RELEASE_0.7.0.md` §8.
+ 
++### Поле 05–08.10 (поправка ADR-027 от 08.10: «VD сейчас, RVC потом»)
++
++* Корона выбрана ухом Курьера по VD-прогону (не стендом): рабочая база — Qwen3-TTS
++  VoiceDesign чистый RU, душа = `preview_03_seed1348810977`; прод — резидент 0.6B-Base
++  на чистом клоне VD-базы (`--adopt 3 --verify-clone` → `default_voice: lilith-soul`);
++  1.7B-VoiceDesign остаётся офлайн-цехом (бюджет ADR-028).
++* **Отложенный голос** в очереди 0.7.1/0.8.0 (запись HANDOVER §6 — чтобы не потерять):
++  клон с живого JP-референса (поле: тембр «огонь», но «ворон» BGM-заземления и дрифт
++  ~50 с; короткие реплики чисты) + RVC-пост-фильтр (вторая очередь, Q-C).
++* Bake-off — **отложен, не отменён** (полевых данных хватило для выбора); стенд по
++  XTTS-рецепту поля дополнен прямой инициализацией весов (`--xtts-model-path/
++  --xtts-config-path/--xtts-vocab-path` — обход легаси-загрузчика с мёртвым R2-CDN).
++* Полевой журнал (VD-RU/VD-JP/клон-артефакты, XTTS-рецепт окружения: coqui-tts 0.27.5,
++  transformers 4.57.x, torchaudio 2.6.0, веса с ModelScope без speakers.json, CPML) —
++  RELEASE_0.7.0.md §9.
++
+ ### Что дальше
+ 
+ * Замер Е (0.6.7) у Курьера → ребейз `feat/voice-qwen3` → мерж → тег `v0.7.0` → Замер Ж.
+diff --git a/lilith/RELEASE_0.7.0.md b/lilith/RELEASE_0.7.0.md
+index f8608dd..a0780c4 100644
+--- a/lilith/RELEASE_0.7.0.md
++++ b/lilith/RELEASE_0.7.0.md
+@@ -211,4 +211,63 @@ python scripts\voice_bakeoff.py --blind-only --run-dir voices\bakeoff\run1
+ 
+ ---
+ 
++## 9. Полевой журнал 05–08.10.2026 (голос-поле; решение «VD сейчас, RVC потом»)
++
++Конституционная запись — `docs/DECISIONS.md`, поправка ADR-027 от 08.10.2026. Здесь —
++рабочая выжимка для Курьера.
++
++### 9.1 Что выбрали
++
++* **Душа Лилит (RU-база):** `voices/preview/lilith_20261005_201733/preview_03_seed1348810977.wav`
++  — seed **1348810977**, 1.7B-VoiceDesign, прогон `voice_preview.py` 05.10.
++* **Прод-путь (штатный, ADR-027 §4):** усыновить базу и посадить резидента 0.6B-Base
++  на её чистый синтетический клон:
++
++```bat
++python scripts\voice_preview.py --persona lilith --adopt 3 ^
++  --preview-dir voices\preview\lilith_20261005_201733 --verify-clone
++:: слушать personas\lilith\voice\adopt_check.wav: тембр == preview_03?
++:: затем горячо (без перезапуска) в config\config.yaml:
++::   voice.default_voice: "lilith-soul"
++:: и в personas\lilith\voice.yaml:  pack: lilith-soul
++```
++
++  `--verify-clone` теперь особенно важен: полевой клон с грязного JP-референса дал
++  «ворона» (BGM-заземление) и дрифт ~50 с — на чистой VD-базе обоих быть не должно,
++  но проверяем ухом до переключения. Короткие стрим-чанки (chunk_size 8 ≈ 667 мс)
++  дрифт не накапливают — полевые данные это подтверждают.
++
++### 9.2 Полевые данные (факты, легшие в решение)
++
++| Режим | Наблюдение |
++|---|---|
++| VD-RU (1.7B-VoiceDesign) | чисто и стабильно 6–8 с, без артефактов; просодия плоская → эмоции будем брать «платьями» (директива VD-dresses, 0.7.1-b) |
++| VD-JP | выразительно |
++| Клон JP-референс → RU | тембр/эмоции/интонации «огонь» на первых секундах; галлюцинация «ворона» (акустическое заземление BGM-шума), авторегрессионный дрифт ~50 с на длинном тексте; 2–5 с — без дрифта. Вердикт: экспериментальная база под RVC и платья, не прод |
++| qwen3 Ж0 (3060) | RTF 2.09 · TTFA 403 мс · VRAM-пик 5.2 ГБ |
++
++### 9.3 Отложено в 0.7.1/0.8.0 («отложенный голос» — очередь в HANDOVER §6)
++
++* клон-база с живого JP-референса (LilithGolos.wav) — эксперименты под RVC и платья;
++* **RVC-пост-фильтр** (вторая очередь, Q-C) — фиксация тембра, если клон «плывёт»;
++* bake-off стенд — НЕ отменён, отложен (готов в `scripts/voice_bakeoff.py`, артефакты v4/v5);
++* нонвербалика в WS-протокол (Q7-а эксперимент с тегами — заодно с платьями).
++
++### 9.4 XTTS-рецепт замороженного окружения (xtts-env, пригодится в 0.7.1)
++
++* `coqui-tts 0.27.5` (форк; py3.11). Оригинал `tts==0.22.0` sdist на Win несобираем:
++  numpy2 + нет заголовков Windows SDK (fatal C1083 pyconfig.h) → только форк.
++* transformers: окно **4.57.x** (>=4.57 по metadata; 5.x теряет `isin_mps_friendly`;
++  ≤4.53 теряет `is_torchcodec_available`).
++* torchaudio CPU-двойник **2.6.0** совместим с torch 2.6.0+cu124 (R2-CDN мёртв → PyPI).
++* Веса XTTS v2: hf-mirror падает на LFS-метаданных; ModelScope `AI-ModelScope/XTTS-v2`
++  отдал всё, кроме speakers.json (404) → для клонирования через `speaker_wav` достаточно
++  пустого `{}`.
++* Легаси-загрузчик (requests → us.aws.cdn.hf.co) игнорирует HF_ENDPOINT — обход: прямая
++  инициализация `TTS(model_path=…, config_path=…, vocab_path=…)`. В `voice_bakeoff.py`
++  для этого есть `--xtts-model-path/--xtts-config-path/--xtts-vocab-path`.
++* Лицензия CPML non-commercial — согласие принято (домашний проект).
++
++---
++
+ *— Лилька-строитель, 27.09.2026. Одна корона, шкаф платьев, бюджет соблюдён. 🦇*
+diff --git a/lilith/docs/DECISIONS.md b/lilith/docs/DECISIONS.md
+index ce9fd6b..133474c 100644
+--- a/lilith/docs/DECISIONS.md
++++ b/lilith/docs/DECISIONS.md
+@@ -901,6 +901,48 @@ ADR-022) или silero. Требования этапа «Голос»: (а) rea
+    для дома приемлемо — прецедент silero). Итог по лицензиям — после bake-off, с текстами.
+ 
+ 
++### Поправка 08.10.2026 — решение «VD сейчас, RVC потом» (Архитектор, ратифицировано Курьером)
++
++**Статус:** принято (отчёт Архитектора 08.10.2026 через Курьера; полевые прогоны 05–08.10).
++
++1. **Рабочая база СЕЙЧАС — Qwen3-TTS Voice Design, чистый RU.** Душа выбрана ухом
++   Курьера: `voices/preview/lilith_20261005_201733/preview_03_seed1348810977.wav`
++   (**seed 1348810977**, модель 1.7B-VoiceDesign, офлайн-прогон `voice_preview.py`).
++   Прод-озвучка — штатный поток design-then-clone ADR-027 §4: `--adopt 3` →
++   `personas/lilith/voice/reference.wav` (+точная транскрипция + soul.yaml) → резидент
++   **0.6B-Base клонирует чистую синтетическую RU-базу**; VD-1.7B остаётся офлайн-цехом
++   (не резидент — бюджет ADR-028 не позволяет). Вердикт Ж0 остаётся в силе: TTFA 403 мс,
++   RTF 2.09, VRAM-пик 5.2 ГБ у 0.6B.
++2. **Клон с JP-референса (LilithGolos.wav) и RVC-слой — ОТЛОЖЕНЫ в 0.7.1/0.8.0**
++   («отложенный голос», очередь в HANDOVER §6). RVC — пост-фильтр тембра второй очереди
++   (Q-C от 28.09 в силе), НЕ корона.
++3. **Полевые данные 05–08.10 (факты машины, легли в основу решения):**
++   * VD-RU: чисто и стабильно на 6–8 с, без артефактов; просодия плоская (без эмоций)
++     → эмоции — «платья» (см. проект директивы VD-dresses, 0.7.1-b).
++   * VD-JP: выразительно.
++   * Клон (JP-референс + точная транскрипция, language=Russian): тембр/эмоции/интонации
++     «огонь» на первых секундах; артефакты: галлюцинация «ворона» (акустическое
++     заземление BGM-шума референса) и авторегрессионный дрифт на ~50 с длинного текста;
++     на коротких репликах (2–5 с) дрифт не накапливается (наш стриминг режет короче —
++     терпимо). Вывод: клон с живого JP-референса = экспериментальная база под RVC и
++     стилевые платья, не прод.
++4. **Bake-off стенд (решение Q-B от 28.09) — НЕ отменён, ОТЛОЖЕН**: корона выбрана
++   ухом Курьера по VD-прогону; `scripts/voice_bakeoff.py` держим готовым (артефакты
++   v4/v5) — понадобится при ревизии короны и для XTTS/Fish-забегов 0.7.1+.
++5. **XTTS-кампания (рецепт замороженного окружения — в 0.7.1 не потеряем):**
++   coqui-tts 0.27.5 (xtts-env, py3.11); sdist `tts==0.22.0` на Win несобираем
++   (numpy2 + нет заголовков Windows SDK: fatal C1083 pyconfig.h) → только форк;
++   окно transformers для coqui-tts: **4.57.x** (metadata >=4.57; 5.x теряет
++   `isin_mps_friendly`; <=4.53 теряет `is_torchcodec_available`);
++   torchaudio CPU-двойник 2.6.0 совместим с torch 2.6.0+cu124 (R2-CDN мёртв → PyPI);
++   веса XTTS v2: hf-mirror падает на LFS-метаданных, ModelScope
++   `AI-ModelScope/XTTS-v2` отдал всё КРОМЕ speakers.json (404) → для клонирования
++   через speaker_wav достаточно пустого `{}`; легаси-загрузчик (requests →
++   us.aws.cdn.hf.co) игнорирует HF_ENDPOINT — обход: прямая инициализация
++   `TTS(model_path=…, config_path=…, vocab_path=…)`; лицензия CPML non-commercial
++   (согласие принято).
++
++
+ ---
+ 
+ ## ADR-028. Разделение мозгов: ассистент 4B — резидент голосовой сессии, ГМ MoE на :1237 с offload экспертов, VRAM-бюджет честный (v0.7.0)
+diff --git a/lilith/scripts/voice_bakeoff.py b/lilith/scripts/voice_bakeoff.py
+index 8408e5b..c81bb35 100644
+--- a/lilith/scripts/voice_bakeoff.py
++++ b/lilith/scripts/voice_bakeoff.py
+@@ -119,6 +119,11 @@ def build_parser() -> argparse.ArgumentParser:
+     p.add_argument("--fish-half", action="store_true",
+                    help="--half для text2semantic (GPU без bf16 / мало VRAM)")
+     p.add_argument("--xtts-model", default="tts_models/multilingual/multi-dataset/xtts_v2")
++    p.add_argument("--xtts-model-path", default=None,
++                   help="прямая инициализация весов XTTS (полевой рецепт 08.10: легаси-"
++                        "загрузчик игнорирует HF_ENDPOINT, R2/CDN мёртв) — путь к model.pth")
++    p.add_argument("--xtts-config-path", default=None, help="config.json к --xtts-model-path")
++    p.add_argument("--xtts-vocab-path", default=None, help="vocab.json к --xtts-model-path")
+     p.add_argument("--qwen3-model", default="Qwen/Qwen3-TTS-12Hz-0.6B-Base")
+     return p
+ 
+@@ -254,8 +259,21 @@ def bake_xtts(ctx: BakeContext) -> None:
+     except ImportError:
+         pass
+     _vram_peak_gb(reset=True)
+-    _log(f"xtts: загружаю {ctx.args.xtts_model} на {device}...")
+-    tts = Tts(ctx.args.xtts_model).to(device)
++    if ctx.args.xtts_model_path:
++        # Полевой рецепт 08.10 (RELEASE §9.4): легаси-загрузчик TTS по имени модели
++        # ходит в us.aws.cdn.hf.co и игнорирует HF_ENDPOINT — на мёртвом CDN падает.
++        # Обход: прямая инициализация локальными весами. speakers.json не нужен
++        # (клон через speaker_wav), пустой {} допустим.
++        init_kwargs: dict[str, Any] = {"model_path": ctx.args.xtts_model_path}
++        if ctx.args.xtts_config_path:
++            init_kwargs["config_path"] = ctx.args.xtts_config_path
++        if ctx.args.xtts_vocab_path:
++            init_kwargs["vocab_path"] = ctx.args.xtts_vocab_path
++        _log(f"xtts: прямая инициализация {init_kwargs} на {device}...")
++        tts = Tts(**init_kwargs).to(device)
++    else:
++        _log(f"xtts: загружаю {ctx.args.xtts_model} на {device}...")
++        tts = Tts(ctx.args.xtts_model).to(device)
+     for pid, text in ctx.phrases:
+         out = ctx.run_dir / f"xtts_{pid}.wav"
+         t0 = time.perf_counter()
+@@ -268,9 +286,12 @@ def bake_xtts(ctx: BakeContext) -> None:
+                           "gen_sec": round(gen, 2),
+                           "rtf": round(dur / gen, 2) if dur and gen else None})
+         _log(f"xtts/{pid}: {gen:.1f}с генерация")
+-    ctx.engines["xtts"] = {"status": "ok", "note": f"model={ctx.args.xtts_model}, device={device}",
+-                           "pkg": _package_version("coqui-tts") or _package_version("TTS"),
+-                           "vram_peak_gb": _vram_peak_gb()}
++    ctx.engines["xtts"] = {
++        "status": "ok",
++        "note": f"model={ctx.args.xtts_model_path or ctx.args.xtts_model}, device={device}",
++        "pkg": _package_version("coqui-tts") or _package_version("TTS"),
++        "vram_peak_gb": _vram_peak_gb(),
++    }
+ 
+ 
+ def bake_cosyvoice3(ctx: BakeContext) -> None:
+diff --git a/lilith/tests/test_voice_bakeoff.py b/lilith/tests/test_voice_bakeoff.py
+index 3935955..ff5838f 100644
+--- a/lilith/tests/test_voice_bakeoff.py
++++ b/lilith/tests/test_voice_bakeoff.py
+@@ -53,6 +53,9 @@ class TestParser:
+         assert args.fish_checkpoints == "checkpoints/s2-pro"
+         assert "xtts_v2" in args.xtts_model
+         assert "0.6B-Base" in args.qwen3_model
++        # полевой рецепт 08.10: прямая инициализация XTTS локальными весами
++        assert args.xtts_model_path is None
++        assert args.xtts_config_path is None and args.xtts_vocab_path is None
+ 
+     def test_engine_choices_are_the_qb_candidates(self, vb) -> None:
+         """Кандидаты — ровно из директивы Q-B: CosyVoice 3, Fish S2, XTTS v2, qwen3-контроль."""
+-- 
+2.39.5
+
+From 2736e31617b0fb6f6b95273c5e48d3a3b544acc8 Mon Sep 17 00:00:00 2001
+From: Lilith-Builder <lilith-builder@lilith.local>
+Date: Thu, 8 Oct 2026 14:49:31 +0000
+Subject: [PATCH 3/3] =?UTF-8?q?docs(voice):=20=D0=B2=D0=B5=D1=80=D0=B4?=
+ =?UTF-8?q?=D0=B8=D0=BA=D1=82=20=C2=AB=D0=9E=D0=9D=D0=90=C2=BB=20=E2=80=94?=
+ =?UTF-8?q?=20=D0=B2=D1=80=D0=B5=D0=BC=D0=B5=D0=BD=D0=BD=D0=B0=D1=8F=20?=
+ =?UTF-8?q?=D1=80=D0=B0=D0=B1=D0=BE=D1=87=D0=B0=D1=8F=20=D0=BA=D0=BE=D1=80?=
+ =?UTF-8?q?=D0=BE=D0=BD=D0=B0=20=D0=BF=D1=80=D0=B8=D0=BD=D1=8F=D1=82=D0=B0?=
+ =?UTF-8?q?;=20=D0=BF=D0=B0=D1=81=D0=BF=D0=BE=D1=80=D1=82=20=D0=B4=D1=83?=
+ =?UTF-8?q?=D1=88=D0=B8,=20VRAM=20=D0=BF=D0=BE=20=D1=84=D0=B0=D0=BA=D1=82?=
+ =?UTF-8?q?=D1=83,=20=D0=BE=D1=87=D0=B5=D1=80=D0=B5=D0=B4=D1=8C=200.7.1?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Отчёт Архитектора 08.10.2026 (вечер, через Курьера) зафиксирован в источнике правды:
+
+* docs/DECISIONS.md — поправка ADR-027 (вечер 08.10): голос ЖИВ в панели, вердикт
+  Курьера «голосочек приятный, несложные фразы ок, она прям всё повторила»; корона
+  qwen3-0.6B на чистой VD-базе — временная рабочая; паспорт души (seed 1348810977,
+  instruct "anime girl voice, very high pitched, cute, sweet and breathy, young
+  female, Japanese anime dub style, emotional", 1.7B-VoiceDesign) — копия в
+  конституции; RU-болезни (ударения «КирюхА»/«рабОООтаем», протяжки «ба-а-ам» по
+  буквам — токенизация дефисов) → препроцессинг 0.7.1-a; bake-off отложен (вердикт
+  ухом), не отменён; отложенный голос уточнён: RVC-тембр Эсдес поверх чистого VD +
+  JP-клон как экспериментальная база; памятка по рубильникам (backend: mock в
+  конфиге не существует — mock это фолбэк-бин; настоящие — default_voice/pack).
+* Поправка ADR-028 (вечер 08.10): VRAM по факту коммутации — 5.1 из 12 ГБ
+  (сток 1.4 + qwen3-0.6b ~3.7; Ж0-пик 5.2 = пик генерации); бюджет укладывается
+  с запасом (ратифицировано); пересчёт при входе RVC (+1–1.5 ГБ) — Ж4-б.
+* RELEASE_0.7.0.md §9.5 — итог дня: вердикт, паспорт, VRAM, RU-болезни, рубильники.
+* HANDOVER §2/§6 — статус «голос ЖИВ», очередь 0.7.1 (препроцессинг: словарик
+  ударений + правило drawl; RVC-слой Эсдес — конверсия ДО визем, липсинк;
+  нонвербалика в WS; .exe-упаковка — план 0.8.0; VD-платья поглощены/отложены
+  RVC-слоем, возврат по итогам Ж7-в).
+* CHANGELOG 0.7.0 — блок «Поле 08.10 вечер». PLAN.md — статус.
+
+Проект директивы 0.7.1 (препроцессинг + RVC + .exe-план, вопросы Г-1…Г-6) — у
+Строителя в мастерской (DIRECTIVE_DRAFT_071.md), в репо поедет реализацией после
+утверждения. Код не менялся: счётчик тестов прежний (1145 passed, 2 skipped;
+1147 с tree-sitter).
+---
+ HANDOVER.md              | 56 +++++++++++++++++++++-------------------
+ PLAN.md                  |  4 ++-
+ lilith/CHANGELOG.md      | 14 ++++++++++
+ lilith/RELEASE_0.7.0.md  | 19 ++++++++++++++
+ lilith/docs/DECISIONS.md | 42 ++++++++++++++++++++++++++++++
+ 5 files changed, 107 insertions(+), 28 deletions(-)
+
+diff --git a/HANDOVER.md b/HANDOVER.md
+index 92e79f4..40b700d 100644
+--- a/HANDOVER.md
++++ b/HANDOVER.md
+@@ -57,12 +57,12 @@
+ 
+ | | |
+ |---|---|
+-| Версия | **0.7.0-voice** на ветке `feat/voice-qwen3`, **ребейз на принятый main `6d0838c` (0.6.7.1) выполнен** — замер Е зелёный (питомец жив: драг/стрелки/F10/персист/F9/F11/Ctrl+Alt+Q из игры; editor-компиляция 0 красных) |
+-| Этап | «Голос» (апгрейд этапа 4): резидент Qwen3-TTS-0.6B через `faster-qwen3-tts`, «шкаф платьев», Voice Design (`scripts/voice_preview.py`), нонвербалика wav-пакетами — **ADR-027/028** (перенумерованы Строителем: ADR-026 занят окном-питомцем с 23.09 — на ратификацию Архитектору), детали в `lilith/RELEASE_0.7.0.md` |
+-| Тесты | **1012 passed, 2 skipped** (с tree-sitter — 1014), +75 гвардов голоса |
++| Версия | **0.7.0-voice**: main `363b9e6` (коробка v2 с 01.10) + патчи v5/v6 (bake-off-стенд + полевые записи 05–08.10). **Голос ЖИВ у Курьера** — вердикт «ОНА» (08.10), корона qwen3-0.6B на чистой VD-базе принята как временная рабочая |
++| Этап | «Голос» (апгрейд этапа 4): резидент Qwen3-TTS-0.6B через `faster-qwen3-tts`, «шкаф платьев», Voice Design (`scripts/voice_preview.py`), нонвербалика wav-пакетами — **ADR-027/028** + поправки 28.09/08.10 (решение «VD сейчас, RVC потом», паспорт души seed 1348810977); детали — `lilith/RELEASE_0.7.0.md` §8–9 |
++| Тесты | **1145 passed, 2 skipped** (с tree-sitter — 1147); гварды голоса +75, стенда +15 |
+ | Чекер C# | `scripts/check_csharp_syntax.py` → 11 файлов, 2 ветки, 0 ошибок (Unity-клиент в 0.7.0 не тронут) |
+-| Приёмка | порядок: Замер Е (0.6.7, Курьер) → пуш 0.6.7 + тег → ребейз `feat/voice-qwen3` → мерж → тег `v0.7.0` → **Замер Ж** (маршрут: RELEASE_0.7.0.md §5) |
+-| Теги | `v0.6.3` на `945052b`, `v0.6.5` на последнем коммите серии; **`v0.6.4` не тегируется** (замещён локально, не был принят); `v0.6.6` — после приёмки стекла F7; `v0.6.7` — после Замера Е; `v0.7.0` — после Замера Ж |
++| Приёмка | Ж0 снят (RTF 2.09 / TTFA 403 мс / VRAM-пик 5.2; резидент по факту ~3.7 ГБ, система 5.1 из 12); Ж1 фактически пройден ухом (вердикт «ОНА»); осталось: Ж2/Ж3 (латентность формально), Ж4–Ж6 → тег `v0.7.0` (вопрос Г-1 Архитектору); далее 0.7.1 — препроцессинг (ударения/протяжки) + RVC-слой (тембр Эсдес) |
++| Теги | `v0.6.3` на `945052b`; `v0.6.5`/`v0.6.6` на `d2b5658`; **`v0.6.4` не тегируется**; `v0.6.7` на `d545dae`; 0.6.7.1 = `6d0838c` (без отдельного тега); `v0.7.0` — после Ж2–Ж6 |
+ | Пуш | у строителя нет креденшелов → отдаём zip + `git format-patch` |
+ 
+ ---
+@@ -148,29 +148,31 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+ 
+ ## 6. Открытые хвосты
+ 
+-1. **Замер Е (0.6.7, окно-питомец) у Кирюши** — в его темпе; голосовая ветка
+-   `feat/voice-qwen3` с 0.6.7 по файлам не пересекается (voice/, scripts/, config vs окно/хоткеи).
+-   После Е: пуш 0.6.7 + тег → ребейз голоса → мерж → Замер Ж (RELEASE_0.7.0.md §5).
+-2. **Замер Ж (голос) — статус 08.10**: Ж0 снят (RTF 2.09 / TTFA 403 мс / VRAM 5.2 ГБ).
+-   Решение по короне 08.10 (поправка ADR-027 от 08.10, ратифицировано): **«VD сейчас,
+-   RVC потом»** — рабочая база = Qwen3-TTS Voice Design чистый RU, душа =
+-   `preview_03_seed1348810977` (выбрана ухом Курьера 05.10); прод = резидент 0.6B-Base
+-   на её чистом синтетическом клоне: `--adopt 3 --verify-clone` → `default_voice:
+-   lilith-soul` (горячо). Bake-off-стенд — **отложен (не отменён)**, готов
+-   (`scripts/voice_bakeoff.py`). Осталось: Ж2/Ж3 (латентность), Ж4 (VRAM-сожительство),
+-   Ж5 (фолбэк), Ж6 (тесты) → тег `v0.7.0`. Полевой журнал и шаги усыновления —
+-   RELEASE_0.7.0.md §9.
+-3. **Очередь 0.7.1**: (а) **VD-платья** — стилевые описания (эмоции) поверх чистой
+-   RU-базы; проект директивы у Строителя, ждёт утверждения Архитектором;
+-   (б) проводка нонвербальных тегов в WS-протокол (+ эксперимент Q7-а с тегами);
+-   (в) XTTS-забеги по рецепту замороженного окружения (RELEASE §9.4);
+-   (г) персистенция переодевания движка в runtime_settings.json;
+-   (д) при тесноте Ж4 — вынос TTS в процесс (`faster-qwen3-tts serve`).
+-4. **ОТЛОЖЕННЫЙ ГОЛОС (0.7.1/0.8.0 — не потерять; просьба Архитектора 08.10)**:
++1. **Голос ЖИВ (08.10)**: вердикт «ОНА» — корона qwen3-0.6B на чистой VD-базе
++   (душа seed 1348810977, паспорт в `personas/lilith/voice/soul.yaml` и в поправке
++   ADR-027 от 08.10 вечер) принята как временная рабочая. VRAM по факту: 5.1 из 12
++   (TTS ~3.7). Осталось формально: Ж2/Ж3 (латентность), Ж4–Ж6 → тег `v0.7.0`
++   (вопрос Г-1 Архитектору: ставим ли тег по факту «голос жив»).
++2. **Bake-off-стенд — отложен, НЕ отменён** (вердикт принят ухом): готов в
++   `scripts/voice_bakeoff.py` + артефакты v5/v6; пригодится, если владелец передумает
++   или для XTTS/Fish-забегов 0.7.1+. Маршрут — RELEASE_0.7.0.md §8.
++3. **Очередь 0.7.1 (проект директивы у Строителя — DIRECTIVE_DRAFT_071.md, ждёт
++   утверждения + ответов Г-1…Г-6)**: (а) 0.7.1-a — препроцессинг `voice/preprocess.py`:
++   словарик ударений (эксперимент Ж7-б: маркер U+0301 vs заглавная vs «+»; болезни поля:
++   «КирюхА», «рабОООтаем») + автозамена протяжек X-X-X→XXX (правило drawl: «ба-а-ам»
++   не по буквам; легитимные дефисы «кто-то»/«ой-ой» правило не трогает по построению);
++   (б) 0.7.1-b — **RVC-пост-фильтр**: чистый RU VD + тембр **Эсдес** (.pth+.index
++   добывает Курьер → models/rvc/esdeath/), конверсия В ПайПЛАЙНЕ ДО визем (липсинк!),
++   движок — проба rvc-python/rvc_inferpy/Aplio на машине, VRAM +1–1.5 ГБ, Ж4-б
++   обязательна; (в) нонвербалика в WS-протокол (Q7-а); (г) персистенция переодевания
++   движка; (д) при тесноте — вынос TTS в процесс.
++4. **ОТЛОЖЕННЫЙ ГОЛОС (не потерять; просьбы Архитектора 08.10 утро+вечер)**:
++   RVC-слой поверх VD-базы (целевой тембр Эсдес — «идеально без артефактов») и
+    клон-база с живого JP-референса (LilithGolos.wav + точная транскрипция; поле:
+-   тембр/эмоции «огонь», но галлюцинация «ворона» на BGM-заземлении и авторегрессионный
+-   дрифт ~50 с) + **RVC-пост-фильтр** (вторая очередь Q-C — фиксация тембра). Порядок:
+-   сперва платья на VD-базе, затем RVC поверх отложенного клона, если тембр плывёт.
++   тембр «огонь», но «ворон» BGM-заземления и дрифт ~50 с) как экспериментальная база
++   под RVC и стилевые платья. Черновик «VD-платья» (08.10 утро) — поглощён/отложен
++   RVC-слоем, возврат по итогам Ж7-в. **.exe-упаковка — план 0.8.0** (дизайн отдельной
++   директивой). XTTS-рецепт замороженного окружения — RELEASE §9.4.
+ 5. **Душа Оли**: персоны `olya` в `personas/` ещё нет (есть `_template` и `lilith`) —
+    заведём карточку, когда Курьер выберет душу в voice_preview (`--persona olya` уже работает).
+ 5. **Headless-проба по исходникам UniVRM** — не строим. Триггер постройки (решение
+diff --git a/PLAN.md b/PLAN.md
+index f29dbdb..71b55a3 100644
+--- a/PLAN.md
++++ b/PLAN.md
+@@ -1,7 +1,9 @@
+ # 📋 PLAN.md — ПЛАН ПРОЕКТА LILITH-CORE
+ 
+ > **Статус:** ЭТАП 6 закрыт полностью (замер Д); окно-питомец 0.6.7 принято замером Е;
+-> этап «Голос» 0.7.0 собран на ветке `feat/voice-qwen3` — **ждёт Замер Ж**.
++> этап «Голос» 0.7.0 — **голос ЖИВ у Курьера** (вердикт «ОНА» 08.10, корона qwen3-0.6B
++> на VD-базе — временная рабочая); формально остались Ж2–Ж6 → тег v0.7.0; далее 0.7.1
++> (препроцессинг ударений/протяжек + RVC-тембр Эсдес).
+ > **Версия:** `0.7.0-voice` (база — принятый main `6d0838c` = 0.6.7.1) · **ТЕСТЫ СЕЙЧАС: 1145 passed, 2 skipped** (с tree-sitter — 1147)
+ > **Освежён:** 22.09.2026 Лилькой-строителем (до этого файл остановился на этапе 3 —
+ > восстановлен по `CHANGELOG.md`, `docs/DECISIONS.md` (ADR-001…ADR-023) и `RELEASE_*.md`)
+diff --git a/lilith/CHANGELOG.md b/lilith/CHANGELOG.md
+index e87a0e2..cf4b030 100644
+--- a/lilith/CHANGELOG.md
++++ b/lilith/CHANGELOG.md
+@@ -80,6 +80,20 @@
+   transformers 4.57.x, torchaudio 2.6.0, веса с ModelScope без speakers.json, CPML) —
+   RELEASE_0.7.0.md §9.
+ 
++### Поле 08.10 вечер — вердикт «ОНА» (корона принята как временная рабочая)
++
++* **Голос ЖИВ в панели**: qwen3 + профиль `lilith-soul`; вердикт Курьера: «голосочек
++  приятный, несложные фразы ок, она прям всё повторила». Паспорт души: seed 1348810977,
++  instruct "anime girl voice, very high pitched, cute, sweet and breathy…", 1.7B-VoiceDesign
++  (копия — поправка ADR-027 от 08.10 вечер).
++* VRAM по факту коммутации: **5.1 из 12** (сток 1.4 + qwen3-0.6b ~3.7; Ж0-пик 5.2 —
++  пик генерации) → поправка ADR-028: бюджет укладывается с запасом (пересчёт при RVC — Ж4-б).
++* RU-болезни qwen3 в препроцессинг 0.7.1-a: ударения («КирюхА») → словарик; протяжки
++  «ба-а-ам» по буквам → автозамена X-X-X→XXX. RVC-слой (тембр Эсдес) — 0.7.1-b;
++  .exe-упаковка — план 0.8.0. Проект директивы 0.7.1 — у Строителя (DIRECTIVE_DRAFT_071).
++* Bake-off: отложен (вердикт принят ухом), стенд готов. Черновик «VD-платья» —
++  поглощён/отложен RVC-слоем.
++
+ ### Что дальше
+ 
+ * Замер Е (0.6.7) у Курьера → ребейз `feat/voice-qwen3` → мерж → тег `v0.7.0` → Замер Ж.
+diff --git a/lilith/RELEASE_0.7.0.md b/lilith/RELEASE_0.7.0.md
+index a0780c4..ac514ce 100644
+--- a/lilith/RELEASE_0.7.0.md
++++ b/lilith/RELEASE_0.7.0.md
+@@ -268,6 +268,25 @@ python scripts\voice_preview.py --persona lilith --adopt 3 ^
+   для этого есть `--xtts-model-path/--xtts-config-path/--xtts-vocab-path`.
+ * Лицензия CPML non-commercial — согласие принято (домашний проект).
+ 
++### 9.5 Итог дня 08.10 — вердикт «ОНА» (ратифицировано)
++
++* **Голос в панели ЖИВОЙ**: qwen3 включён, профиль `lilith-soul` работает. Вердикт
++  Курьера: «голосочек приятный, несложные фразы ок, она прям всё повторила».
++  Принято как **РАБОЧИЙ ГОЛОС логова**; корона qwen3-0.6B — временная рабочая.
++* **Паспорт души** (`personas/lilith/voice/soul.yaml` у Курьера; копия — поправка
++  ADR-027 от 08.10 вечер): seed **1348810977**, instruct "anime girl voice, very high
++  pitched, cute, sweet and breathy, young female, Japanese anime dub style, emotional",
++  модель 1.7B-VoiceDesign. Те же seed+instruct+текст = та же душа.
++* **VRAM по факту коммутации:** занято **5.1 ГБ из 12** (сток системы 1.4 + qwen3-0.6b
++  ~3.7); Ж0-пик 5.2 был пиком генерации. Бюджет ADR-028 — укладываемся с запасом
++  (пересчёт при входе RVC — Ж4-б).
++* **RU-болезни qwen3 (поле):** ударения («КирюхА», «рабОООтаем») и протяжки «ба-а-ам»
++  по буквам (токенизация дефисов) → лечатся в 0.7.1-a препроцессингом (словарик
++  ударений + правило drawl); проект директивы 0.7.1 — у Строителя.
++* **Памятка по рубильникам:** `backend: mock` в config.yaml не существует (mock —
++  фолбэк-бин реестра без `[voice]`); настоящие переключатели — `default_voice:
++  "lilith-soul"` (горячо) и `pack: lilith-soul` + `reference_wav` в voice.yaml персоны.
++
+ ---
+ 
+ *— Лилька-строитель, 27.09.2026. Одна корона, шкаф платьев, бюджет соблюдён. 🦇*
+diff --git a/lilith/docs/DECISIONS.md b/lilith/docs/DECISIONS.md
+index 133474c..9bf6320 100644
+--- a/lilith/docs/DECISIONS.md
++++ b/lilith/docs/DECISIONS.md
+@@ -943,6 +943,38 @@ ADR-022) или silero. Требования этапа «Голос»: (а) rea
+    (согласие принято).
+ 
+ 
++### Поправка 08.10.2026 (вечер) — вердикт «ОНА»: временная рабочая корона принята
++
++**Статус:** принято (итог дня 08.10.2026, ратифицировано Курьером; отчёт Архитектора).
++
++1. **Голос в панели ЖИВОЙ**: qwen3 включён, профиль `lilith-soul` работает. Вердикт
++   Курьера: «голосочек приятный, несложные фразы ок, она прям всё повторила».
++   **Принято как РАБОЧИЙ ГОЛОС логова; корона qwen3-0.6B — временная рабочая**
++   (до RVC-слоя 0.7.1-b и/или ревизии bake-off'ом, если владелец передумает).
++2. **Паспорт души** (хранится у Курьера в `personas/lilith/voice/soul.yaml`, здесь —
++   копия для конституции):
++   * seed: **1348810977** (preview_03 прогона 05.10);
++   * instruct: "anime girl voice, very high pitched, cute, sweet and breathy, young
++     female, Japanese anime dub style, emotional";
++   * text: "Ну привет, Кирюша. Я тут подумала: если ты опять забудешь поесть...";
++   * model: qwen3-tts-17b (VoiceDesign, офлайн-цех).
++   Воспроизводимость: те же seed + instruct + текст = та же душа.
++3. **Известные RU-болезни qwen3 (поле 08.10)** — в препроцессинг 0.7.1-a:
++   ударения («КирюхА», «рабОООтаем») → словарик ударений; протяжки «ба-а-ам» читаются
++   по буквам (токенизация дефисов) → автозамена X-X-X → XXX (правило drawl).
++4. **Bake-off: отложен, НЕ отменён** — вердикт принят ухом, слепое прослушивание не
++   требуется; стенд держим готовым (на случай, если владелец передумает).
++5. **Отложенный голос (0.7.1-b/0.8.0)** уточнён: RVC-пост-фильтр поверх чистого RU VD —
++   целевой тембр **Эсдес** (community-модель .pth+.index добывает Курьер; персонаж
++   вымышленный — доктрина согласия voices/README не нарушается). Клон с живого
++   JP-референса (LilithGolos.wav) — экспериментальная база под RVC и стилевые платья.
++6. **Рубильники голоса (памятка, по итогам дня)**: `backend: mock` в config.yaml НЕ
++   существует — mock это фолбэк-бин реестра при отсутствии `[voice]`, а не строка
++   конфига. Настоящие переключатели: `voice.default_voice: "lilith" → "lilith-soul"`
++   (config.yaml, горячо) и `pack: lilith → lilith-soul` + `reference_wav` в
++   `personas/lilith/voice.yaml`.
++
++
+ ---
+ 
+ ## ADR-028. Разделение мозгов: ассистент 4B — резидент голосовой сессии, ГМ MoE на :1237 с offload экспертов, VRAM-бюджет честный (v0.7.0)
+@@ -1005,3 +1037,13 @@ whisper 1 ГБ = 8–9 ГБ, влезает с запасом» не учиты
+ * Fish S2-Pro (4B, ≥24 ГБ по доке) в бюджет 12 ГБ не входит ни в каком виде — только
+   S1-mini-класс. Решение — по итогам bake-off и Ж4-замеров на реальной короне.
+ 
++### Поправка 08.10.2026 (вечер) — VRAM по факту коммутации
++
++Финальный замер Курьера (голос жив в панели): **занято 5.1 ГБ из 12**; сток системы
++без TTS — 1.4 ГБ; модель qwen3-tts-0.6b резидентом — **~3.7 ГБ** (Ж0-пик 5.2 ГБ был
++пиком генерации с графами/активациями, не постоянным занятием). Вывод Архитектора
++(ратифицирован): бюджет ADR-028 (стек 10.7–13.5 ГБ) — **укладываемся с запасом**.
++Уточнение Строителя: запас подтверждён для текущего состава (TTS + система); при
++входе RVC-слоя (+1–1.5 ГБ, оценка) и 4B-LLM с Unity пересчёт — в Ж4-б (проект
++директивы 0.7.1 §2.4, митигции там же).
++
+-- 
+2.39.5
+

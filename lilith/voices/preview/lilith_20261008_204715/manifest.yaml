@@ -1,0 +1,36 @@
+persona: lilith
+created: '2026-10-08T20:47:26'
+model: E:\models\qwen3-tts-17b
+backend: torch
+instruct: Молодой женский голос, тёплый и чуть хрипловатый, уверенный, с лукавой игривой
+  интонацией; говорит расслабленно, с выразительными паузами и улыбкой в голосе.
+text: Привет, мой сладкий. Сегодня был такой долгий день, и я так соскучилась по тебе.
+  Расскажи мне, как ты?
+language: Russian
+seed_base: 1866614565
+random_seeds: true
+variants:
+- n: 1
+  file: preview_01_seed1866614565.wav
+  seed: 1866614565
+  audio_sec: 9.76
+  gen_sec: 4.81
+  rtf: 2.03
+- n: 2
+  file: preview_02_seed1866615565.wav
+  seed: 1866615565
+  audio_sec: 6.8
+  gen_sec: 3.23
+  rtf: 2.1
+- n: 3
+  file: preview_03_seed1866616565.wav
+  seed: 1866616565
+  audio_sec: 7.04
+  gen_sec: 3.32
+  rtf: 2.12
+- n: 4
+  file: preview_04_seed1866617565.wav
+  seed: 1866617565
+  audio_sec: 6.16
+  gen_sec: 2.91
+  rtf: 2.12

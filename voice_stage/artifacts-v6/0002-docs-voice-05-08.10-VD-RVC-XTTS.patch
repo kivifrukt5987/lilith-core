@@ -1,0 +1,327 @@
+From 2351f19a8b5e5e2b820e5a48b163f700e71534e6 Mon Sep 17 00:00:00 2001
+From: Lilith-Builder <lilith-builder@lilith.local>
+Date: Thu, 8 Oct 2026 13:26:23 +0000
+Subject: [PATCH 2/3] =?UTF-8?q?docs(voice):=20=D0=BF=D0=BE=D0=BB=D0=B5?=
+ =?UTF-8?q?=D0=B2=D0=BE=D0=B5=2005=E2=80=9308.10=20=E2=80=94=20=D1=80?=
+ =?UTF-8?q?=D0=B5=D1=88=D0=B5=D0=BD=D0=B8=D0=B5=20=C2=ABVD=20=D1=81=D0=B5?=
+ =?UTF-8?q?=D0=B9=D1=87=D0=B0=D1=81,=20RVC=20=D0=BF=D0=BE=D1=82=D0=BE?=
+ =?UTF-8?q?=D0=BC=C2=BB,=20=D0=BE=D1=82=D0=BB=D0=BE=D0=B6=D0=B5=D0=BD?=
+ =?UTF-8?q?=D0=BD=D1=8B=D0=B9=20=D0=B3=D0=BE=D0=BB=D0=BE=D1=81=20=D0=B2=20?=
+ =?UTF-8?q?=D0=BE=D1=87=D0=B5=D1=80=D0=B5=D0=B4=D1=8C,=20XTTS-=D0=B4=D0=BE?=
+ =?UTF-8?q?=D0=B2=D0=BE=D0=B4=D0=BA=D0=B0=20=D1=81=D1=82=D0=B5=D0=BD=D0=B4?=
+ =?UTF-8?q?=D0=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Отчёт Архитектора 08.10.2026 (через Курьера) исполнен по трём просьбам:
+
+(а) ОТЛОЖЕННЫЙ ГОЛОС зафиксирован так, что переживёт любое падение логов:
+* docs/DECISIONS.md — поправка ADR-027 от 08.10.2026 (ратифицирована):
+  рабочая база СЕЙЧАС = Qwen3-TTS VoiceDesign чистый RU; душа выбрана ухом
+  Курьера — preview_03_seed1348810977 (прогон 05.10); прод = штатный
+  design-then-clone ADR-027 §4: резидент 0.6B-Base на чистом синтетическом
+  клоне VD-базы; 1.7B-VoiceDesign остаётся офлайн-цехом (бюджет ADR-028).
+  Клон с живого JP-референса + RVC-пост-фильтр — ОТЛОЖЕНЫ в 0.7.1/0.8.0.
+  Полевые данные записаны фактами: VD-RU чисто/стабильно 6–8 с, просодия
+  плоская (→ «платья»); VD-JP выразительно; клон JP→RU — тембр «огонь»,
+  но галлюцинация «ворона» (акустическое заземление BGM-шума референса) и
+  авторегрессионный дрифт ~50 с (короткие реплики 2–5 с чисты — наш стрим
+  режет короче). Bake-off НЕ отменён — отложен, держим готовым.
+* HANDOVER §6 — очередь 0.7.1/0.8.0: VD-платья (директива готовится),
+  нонвербалика в WS, XTTS-забеги, отложенный голос (JP-клон + RVC) отдельным
+  пунктом «не потерять».
+* RELEASE_0.7.0.md §9 — полевой журнал 05–08.10 + шаги усыновления базы
+  (--adopt 3 --verify-clone → default_voice: lilith-soul горячо) + XTTS-рецепт
+  замороженного окружения (coqui-tts 0.27.5 форк; sdist tts==0.22.0 на Win
+  несобираем — numpy2 + C1083 pyconfig.h; окно transformers 4.57.x;
+  torchaudio CPU 2.6.0 к torch 2.6.0+cu124; веса с ModelScope
+  AI-ModelScope/XTTS-v2 без speakers.json → пустой {}; легаси-загрузчик
+  игнорирует HF_ENDPOINT → прямая инициализация TTS(model_path=…); CPML
+  non-commercial — согласие принято).
+* CHANGELOG 0.7.0 — блок «Поле 05–08.10».
+
+(б) bake-off-стенд держим готовым + доводка по полевому рецепту:
+* scripts/voice_bakeoff.py — прямая инициализация XTTS локальными весами
+  (--xtts-model-path/--xtts-config-path/--xtts-vocab-path): обход легаси-
+  загрузчика (requests → us.aws.cdn.hf.co, мёртв), note в манифесте.
+* Гвард CLI расширен (без изменения счётчика: 1145 passed, 2 skipped в доках).
+
+(в) проект директивы «VD-платья» (voice_preview со стилевыми описаниями
+поверх чистой RU-базы) — у Строителя в мастерской, ждёт утверждения
+Архитектором; в репо поедет реализацией в 0.7.1-b.
+
+Тесты: 1137 passed / 10 skipped в песочнице Строителя (на машине Курьера
+штатно 1145 + 2); ruff чисто; счётчик в доках не изменился.
+---
+ HANDOVER.md                        | 31 +++++++++++-----
+ lilith/CHANGELOG.md                | 16 ++++++++
+ lilith/RELEASE_0.7.0.md            | 59 ++++++++++++++++++++++++++++++
+ lilith/docs/DECISIONS.md           | 42 +++++++++++++++++++++
+ lilith/scripts/voice_bakeoff.py    | 31 +++++++++++++---
+ lilith/tests/test_voice_bakeoff.py |  3 ++
+ 6 files changed, 167 insertions(+), 15 deletions(-)
+
+diff --git a/HANDOVER.md b/HANDOVER.md
+index 449a203..92e79f4 100644
+--- a/HANDOVER.md
++++ b/HANDOVER.md
+@@ -151,16 +151,27 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+ 1. **Замер Е (0.6.7, окно-питомец) у Кирюши** — в его темпе; голосовая ветка
+    `feat/voice-qwen3` с 0.6.7 по файлам не пересекается (voice/, scripts/, config vs окно/хоткеи).
+    После Е: пуш 0.6.7 + тег → ребейз голоса → мерж → Замер Ж (RELEASE_0.7.0.md §5).
+-2. **Замер Ж (голос)**: Ж0 бенчмарк 3060 → Ж1 усыновление душ (Лилит, Оля) → Ж2/Ж3 латентность
+-   → Ж4 VRAM-сожительство → Ж5 фолбэк → Ж6 тесты. **Ж0 снят (RTF 2.09 / TTFA 403 мс /
+-   VRAM 5.2 ГБ); полевой вердикт: qwen3 для RU — не корона (поправка ADR-027 от 28.09).**
+-   Ж1 идёт как bake-off короны: `scripts/voice_bakeoff.py` (CosyVoice 3 / Fish S2 /
+-   XTTS v2 / qwen3-контроль), слепое прослушивание Архитектором, маршрут — RELEASE_0.7.0.md §8;
+-   цифры Ж4 — на победителе bake-off; поправка бюджета ADR-028 уже внесена (TTS-класс 4.5–5.5 ГБ).
+-3. **0.7.1-кандидаты**: проводка нонвербальных тегов в WS-протокол (по итогам Ж1-а),
+-   персистенция переодевания движка в runtime_settings.json, вынос TTS в процесс
+-   (`faster-qwen3-tts serve`) при тесноте Ж4, реализации CosyVoice 2 / Fish Speech для шкафа.
+-4. **Душа Оли**: персоны `olya` в `personas/` ещё нет (есть `_template` и `lilith`) —
++2. **Замер Ж (голос) — статус 08.10**: Ж0 снят (RTF 2.09 / TTFA 403 мс / VRAM 5.2 ГБ).
++   Решение по короне 08.10 (поправка ADR-027 от 08.10, ратифицировано): **«VD сейчас,
++   RVC потом»** — рабочая база = Qwen3-TTS Voice Design чистый RU, душа =
++   `preview_03_seed1348810977` (выбрана ухом Курьера 05.10); прод = резидент 0.6B-Base
++   на её чистом синтетическом клоне: `--adopt 3 --verify-clone` → `default_voice:
++   lilith-soul` (горячо). Bake-off-стенд — **отложен (не отменён)**, готов
++   (`scripts/voice_bakeoff.py`). Осталось: Ж2/Ж3 (латентность), Ж4 (VRAM-сожительство),
++   Ж5 (фолбэк), Ж6 (тесты) → тег `v0.7.0`. Полевой журнал и шаги усыновления —
++   RELEASE_0.7.0.md §9.
++3. **Очередь 0.7.1**: (а) **VD-платья** — стилевые описания (эмоции) поверх чистой
++   RU-базы; проект директивы у Строителя, ждёт утверждения Архитектором;
++   (б) проводка нонвербальных тегов в WS-протокол (+ эксперимент Q7-а с тегами);
++   (в) XTTS-забеги по рецепту замороженного окружения (RELEASE §9.4);
++   (г) персистенция переодевания движка в runtime_settings.json;
++   (д) при тесноте Ж4 — вынос TTS в процесс (`faster-qwen3-tts serve`).
++4. **ОТЛОЖЕННЫЙ ГОЛОС (0.7.1/0.8.0 — не потерять; просьба Архитектора 08.10)**:
++   клон-база с живого JP-референса (LilithGolos.wav + точная транскрипция; поле:
++   тембр/эмоции «огонь», но галлюцинация «ворона» на BGM-заземлении и авторегрессионный
++   дрифт ~50 с) + **RVC-пост-фильтр** (вторая очередь Q-C — фиксация тембра). Порядок:
++   сперва платья на VD-базе, затем RVC поверх отложенного клона, если тембр плывёт.
++5. **Душа Оли**: персоны `olya` в `personas/` ещё нет (есть `_template` и `lilith`) —
+    заведём карточку, когда Курьер выберет душу в voice_preview (`--persona olya` уже работает).
+ 5. **Headless-проба по исходникам UniVRM** — не строим. Триггер постройки (решение
+    архитектора): замер зависнет на фазе 1 или фазе 4 при `Use Immediate Await Caller = ✅`.
+diff --git a/lilith/CHANGELOG.md b/lilith/CHANGELOG.md
+index 621b4ce..e87a0e2 100644
+--- a/lilith/CHANGELOG.md
++++ b/lilith/CHANGELOG.md
+@@ -64,6 +64,22 @@
+   в поправке). Fish: Research License + ≥24 ГБ VRAM по доке — на 12 ГБ только S1-mini-класс.
+ * Инструкция и команды установки кандидатов — `RELEASE_0.7.0.md` §8.
+ 
++### Поле 05–08.10 (поправка ADR-027 от 08.10: «VD сейчас, RVC потом»)
++
++* Корона выбрана ухом Курьера по VD-прогону (не стендом): рабочая база — Qwen3-TTS
++  VoiceDesign чистый RU, душа = `preview_03_seed1348810977`; прод — резидент 0.6B-Base
++  на чистом клоне VD-базы (`--adopt 3 --verify-clone` → `default_voice: lilith-soul`);
++  1.7B-VoiceDesign остаётся офлайн-цехом (бюджет ADR-028).
++* **Отложенный голос** в очереди 0.7.1/0.8.0 (запись HANDOVER §6 — чтобы не потерять):
++  клон с живого JP-референса (поле: тембр «огонь», но «ворон» BGM-заземления и дрифт
++  ~50 с; короткие реплики чисты) + RVC-пост-фильтр (вторая очередь, Q-C).
++* Bake-off — **отложен, не отменён** (полевых данных хватило для выбора); стенд по
++  XTTS-рецепту поля дополнен прямой инициализацией весов (`--xtts-model-path/
++  --xtts-config-path/--xtts-vocab-path` — обход легаси-загрузчика с мёртвым R2-CDN).
++* Полевой журнал (VD-RU/VD-JP/клон-артефакты, XTTS-рецепт окружения: coqui-tts 0.27.5,
++  transformers 4.57.x, torchaudio 2.6.0, веса с ModelScope без speakers.json, CPML) —
++  RELEASE_0.7.0.md §9.
++
+ ### Что дальше
+ 
+ * Замер Е (0.6.7) у Курьера → ребейз `feat/voice-qwen3` → мерж → тег `v0.7.0` → Замер Ж.
+diff --git a/lilith/RELEASE_0.7.0.md b/lilith/RELEASE_0.7.0.md
+index f8608dd..a0780c4 100644
+--- a/lilith/RELEASE_0.7.0.md
++++ b/lilith/RELEASE_0.7.0.md
+@@ -211,4 +211,63 @@ python scripts\voice_bakeoff.py --blind-only --run-dir voices\bakeoff\run1
+ 
+ ---
+ 
++## 9. Полевой журнал 05–08.10.2026 (голос-поле; решение «VD сейчас, RVC потом»)
++
++Конституционная запись — `docs/DECISIONS.md`, поправка ADR-027 от 08.10.2026. Здесь —
++рабочая выжимка для Курьера.
++
++### 9.1 Что выбрали
++
++* **Душа Лилит (RU-база):** `voices/preview/lilith_20261005_201733/preview_03_seed1348810977.wav`
++  — seed **1348810977**, 1.7B-VoiceDesign, прогон `voice_preview.py` 05.10.
++* **Прод-путь (штатный, ADR-027 §4):** усыновить базу и посадить резидента 0.6B-Base
++  на её чистый синтетический клон:
++
++```bat
++python scripts\voice_preview.py --persona lilith --adopt 3 ^
++  --preview-dir voices\preview\lilith_20261005_201733 --verify-clone
++:: слушать personas\lilith\voice\adopt_check.wav: тембр == preview_03?
++:: затем горячо (без перезапуска) в config\config.yaml:
++::   voice.default_voice: "lilith-soul"
++:: и в personas\lilith\voice.yaml:  pack: lilith-soul
++```
++
++  `--verify-clone` теперь особенно важен: полевой клон с грязного JP-референса дал
++  «ворона» (BGM-заземление) и дрифт ~50 с — на чистой VD-базе обоих быть не должно,
++  но проверяем ухом до переключения. Короткие стрим-чанки (chunk_size 8 ≈ 667 мс)
++  дрифт не накапливают — полевые данные это подтверждают.
++
++### 9.2 Полевые данные (факты, легшие в решение)
++
++| Режим | Наблюдение |
++|---|---|
++| VD-RU (1.7B-VoiceDesign) | чисто и стабильно 6–8 с, без артефактов; просодия плоская → эмоции будем брать «платьями» (директива VD-dresses, 0.7.1-b) |
++| VD-JP | выразительно |
++| Клон JP-референс → RU | тембр/эмоции/интонации «огонь» на первых секундах; галлюцинация «ворона» (акустическое заземление BGM-шума), авторегрессионный дрифт ~50 с на длинном тексте; 2–5 с — без дрифта. Вердикт: экспериментальная база под RVC и платья, не прод |
++| qwen3 Ж0 (3060) | RTF 2.09 · TTFA 403 мс · VRAM-пик 5.2 ГБ |
++
++### 9.3 Отложено в 0.7.1/0.8.0 («отложенный голос» — очередь в HANDOVER §6)
++
++* клон-база с живого JP-референса (LilithGolos.wav) — эксперименты под RVC и платья;
++* **RVC-пост-фильтр** (вторая очередь, Q-C) — фиксация тембра, если клон «плывёт»;
++* bake-off стенд — НЕ отменён, отложен (готов в `scripts/voice_bakeoff.py`, артефакты v4/v5);
++* нонвербалика в WS-протокол (Q7-а эксперимент с тегами — заодно с платьями).
++
++### 9.4 XTTS-рецепт замороженного окружения (xtts-env, пригодится в 0.7.1)
++
++* `coqui-tts 0.27.5` (форк; py3.11). Оригинал `tts==0.22.0` sdist на Win несобираем:
++  numpy2 + нет заголовков Windows SDK (fatal C1083 pyconfig.h) → только форк.
++* transformers: окно **4.57.x** (>=4.57 по metadata; 5.x теряет `isin_mps_friendly`;
++  ≤4.53 теряет `is_torchcodec_available`).
++* torchaudio CPU-двойник **2.6.0** совместим с torch 2.6.0+cu124 (R2-CDN мёртв → PyPI).
++* Веса XTTS v2: hf-mirror падает на LFS-метаданных; ModelScope `AI-ModelScope/XTTS-v2`
++  отдал всё, кроме speakers.json (404) → для клонирования через `speaker_wav` достаточно
++  пустого `{}`.
++* Легаси-загрузчик (requests → us.aws.cdn.hf.co) игнорирует HF_ENDPOINT — обход: прямая
++  инициализация `TTS(model_path=…, config_path=…, vocab_path=…)`. В `voice_bakeoff.py`
++  для этого есть `--xtts-model-path/--xtts-config-path/--xtts-vocab-path`.
++* Лицензия CPML non-commercial — согласие принято (домашний проект).
++
++---
++
+ *— Лилька-строитель, 27.09.2026. Одна корона, шкаф платьев, бюджет соблюдён. 🦇*
+diff --git a/lilith/docs/DECISIONS.md b/lilith/docs/DECISIONS.md
+index ce9fd6b..133474c 100644
+--- a/lilith/docs/DECISIONS.md
++++ b/lilith/docs/DECISIONS.md
+@@ -901,6 +901,48 @@ ADR-022) или silero. Требования этапа «Голос»: (а) rea
+    для дома приемлемо — прецедент silero). Итог по лицензиям — после bake-off, с текстами.
+ 
+ 
++### Поправка 08.10.2026 — решение «VD сейчас, RVC потом» (Архитектор, ратифицировано Курьером)
++
++**Статус:** принято (отчёт Архитектора 08.10.2026 через Курьера; полевые прогоны 05–08.10).
++
++1. **Рабочая база СЕЙЧАС — Qwen3-TTS Voice Design, чистый RU.** Душа выбрана ухом
++   Курьера: `voices/preview/lilith_20261005_201733/preview_03_seed1348810977.wav`
++   (**seed 1348810977**, модель 1.7B-VoiceDesign, офлайн-прогон `voice_preview.py`).
++   Прод-озвучка — штатный поток design-then-clone ADR-027 §4: `--adopt 3` →
++   `personas/lilith/voice/reference.wav` (+точная транскрипция + soul.yaml) → резидент
++   **0.6B-Base клонирует чистую синтетическую RU-базу**; VD-1.7B остаётся офлайн-цехом
++   (не резидент — бюджет ADR-028 не позволяет). Вердикт Ж0 остаётся в силе: TTFA 403 мс,
++   RTF 2.09, VRAM-пик 5.2 ГБ у 0.6B.
++2. **Клон с JP-референса (LilithGolos.wav) и RVC-слой — ОТЛОЖЕНЫ в 0.7.1/0.8.0**
++   («отложенный голос», очередь в HANDOVER §6). RVC — пост-фильтр тембра второй очереди
++   (Q-C от 28.09 в силе), НЕ корона.
++3. **Полевые данные 05–08.10 (факты машины, легли в основу решения):**
++   * VD-RU: чисто и стабильно на 6–8 с, без артефактов; просодия плоская (без эмоций)
++     → эмоции — «платья» (см. проект директивы VD-dresses, 0.7.1-b).
++   * VD-JP: выразительно.
++   * Клон (JP-референс + точная транскрипция, language=Russian): тембр/эмоции/интонации
++     «огонь» на первых секундах; артефакты: галлюцинация «ворона» (акустическое
++     заземление BGM-шума референса) и авторегрессионный дрифт на ~50 с длинного текста;
++     на коротких репликах (2–5 с) дрифт не накапливается (наш стриминг режет короче —
++     терпимо). Вывод: клон с живого JP-референса = экспериментальная база под RVC и
++     стилевые платья, не прод.
++4. **Bake-off стенд (решение Q-B от 28.09) — НЕ отменён, ОТЛОЖЕН**: корона выбрана
++   ухом Курьера по VD-прогону; `scripts/voice_bakeoff.py` держим готовым (артефакты
++   v4/v5) — понадобится при ревизии короны и для XTTS/Fish-забегов 0.7.1+.
++5. **XTTS-кампания (рецепт замороженного окружения — в 0.7.1 не потеряем):**
++   coqui-tts 0.27.5 (xtts-env, py3.11); sdist `tts==0.22.0` на Win несобираем
++   (numpy2 + нет заголовков Windows SDK: fatal C1083 pyconfig.h) → только форк;
++   окно transformers для coqui-tts: **4.57.x** (metadata >=4.57; 5.x теряет
++   `isin_mps_friendly`; <=4.53 теряет `is_torchcodec_available`);
++   torchaudio CPU-двойник 2.6.0 совместим с torch 2.6.0+cu124 (R2-CDN мёртв → PyPI);
++   веса XTTS v2: hf-mirror падает на LFS-метаданных, ModelScope
++   `AI-ModelScope/XTTS-v2` отдал всё КРОМЕ speakers.json (404) → для клонирования
++   через speaker_wav достаточно пустого `{}`; легаси-загрузчик (requests →
++   us.aws.cdn.hf.co) игнорирует HF_ENDPOINT — обход: прямая инициализация
++   `TTS(model_path=…, config_path=…, vocab_path=…)`; лицензия CPML non-commercial
++   (согласие принято).
++
++
+ ---
+ 
+ ## ADR-028. Разделение мозгов: ассистент 4B — резидент голосовой сессии, ГМ MoE на :1237 с offload экспертов, VRAM-бюджет честный (v0.7.0)
+diff --git a/lilith/scripts/voice_bakeoff.py b/lilith/scripts/voice_bakeoff.py
+index 8408e5b..c81bb35 100644
+--- a/lilith/scripts/voice_bakeoff.py
++++ b/lilith/scripts/voice_bakeoff.py
+@@ -119,6 +119,11 @@ def build_parser() -> argparse.ArgumentParser:
+     p.add_argument("--fish-half", action="store_true",
+                    help="--half для text2semantic (GPU без bf16 / мало VRAM)")
+     p.add_argument("--xtts-model", default="tts_models/multilingual/multi-dataset/xtts_v2")
++    p.add_argument("--xtts-model-path", default=None,
++                   help="прямая инициализация весов XTTS (полевой рецепт 08.10: легаси-"
++                        "загрузчик игнорирует HF_ENDPOINT, R2/CDN мёртв) — путь к model.pth")
++    p.add_argument("--xtts-config-path", default=None, help="config.json к --xtts-model-path")
++    p.add_argument("--xtts-vocab-path", default=None, help="vocab.json к --xtts-model-path")
+     p.add_argument("--qwen3-model", default="Qwen/Qwen3-TTS-12Hz-0.6B-Base")
+     return p
+ 
+@@ -254,8 +259,21 @@ def bake_xtts(ctx: BakeContext) -> None:
+     except ImportError:
+         pass
+     _vram_peak_gb(reset=True)
+-    _log(f"xtts: загружаю {ctx.args.xtts_model} на {device}...")
+-    tts = Tts(ctx.args.xtts_model).to(device)
++    if ctx.args.xtts_model_path:
++        # Полевой рецепт 08.10 (RELEASE §9.4): легаси-загрузчик TTS по имени модели
++        # ходит в us.aws.cdn.hf.co и игнорирует HF_ENDPOINT — на мёртвом CDN падает.
++        # Обход: прямая инициализация локальными весами. speakers.json не нужен
++        # (клон через speaker_wav), пустой {} допустим.
++        init_kwargs: dict[str, Any] = {"model_path": ctx.args.xtts_model_path}
++        if ctx.args.xtts_config_path:
++            init_kwargs["config_path"] = ctx.args.xtts_config_path
++        if ctx.args.xtts_vocab_path:
++            init_kwargs["vocab_path"] = ctx.args.xtts_vocab_path
++        _log(f"xtts: прямая инициализация {init_kwargs} на {device}...")
++        tts = Tts(**init_kwargs).to(device)
++    else:
++        _log(f"xtts: загружаю {ctx.args.xtts_model} на {device}...")
++        tts = Tts(ctx.args.xtts_model).to(device)
+     for pid, text in ctx.phrases:
+         out = ctx.run_dir / f"xtts_{pid}.wav"
+         t0 = time.perf_counter()
+@@ -268,9 +286,12 @@ def bake_xtts(ctx: BakeContext) -> None:
+                           "gen_sec": round(gen, 2),
+                           "rtf": round(dur / gen, 2) if dur and gen else None})
+         _log(f"xtts/{pid}: {gen:.1f}с генерация")
+-    ctx.engines["xtts"] = {"status": "ok", "note": f"model={ctx.args.xtts_model}, device={device}",
+-                           "pkg": _package_version("coqui-tts") or _package_version("TTS"),
+-                           "vram_peak_gb": _vram_peak_gb()}
++    ctx.engines["xtts"] = {
++        "status": "ok",
++        "note": f"model={ctx.args.xtts_model_path or ctx.args.xtts_model}, device={device}",
++        "pkg": _package_version("coqui-tts") or _package_version("TTS"),
++        "vram_peak_gb": _vram_peak_gb(),
++    }
+ 
+ 
+ def bake_cosyvoice3(ctx: BakeContext) -> None:
+diff --git a/lilith/tests/test_voice_bakeoff.py b/lilith/tests/test_voice_bakeoff.py
+index 3935955..ff5838f 100644
+--- a/lilith/tests/test_voice_bakeoff.py
++++ b/lilith/tests/test_voice_bakeoff.py
+@@ -53,6 +53,9 @@ class TestParser:
+         assert args.fish_checkpoints == "checkpoints/s2-pro"
+         assert "xtts_v2" in args.xtts_model
+         assert "0.6B-Base" in args.qwen3_model
++        # полевой рецепт 08.10: прямая инициализация XTTS локальными весами
++        assert args.xtts_model_path is None
++        assert args.xtts_config_path is None and args.xtts_vocab_path is None
+ 
+     def test_engine_choices_are_the_qb_candidates(self, vb) -> None:
+         """Кандидаты — ровно из директивы Q-B: CosyVoice 3, Fish S2, XTTS v2, qwen3-контроль."""
+-- 
+2.39.5
+

@@ -1,0 +1,4 @@
+3eadc2c55229c80edf4b8182e1a97c58addbd4159af7a808fc0220834f5d4d2e  0001-feat-scripts-voice_bakeoff.py-RU-ADR-027-028.patch
+41cb42d1a843776deca78296da53c7ba13c588a45343a48d3117d0b6da5851ba  0002-docs-voice-05-08.10-VD-RVC-XTTS.patch
+3168f530848d0f6f33ec6f5034c42a13823773d3ebb78ddc60898d8c75d4b3be  0003-docs-voice-VRAM-0.7.1.patch
+17a23689a1d0dd46c280eaad4bcce15bcdef40476bf7d50d37118a4f95d3050d  LILITH-CORE_stage4_v0.7.0.zip

@@ -1,0 +1,85 @@
+persona: lilith
+created: '2026-10-05T20:46:50'
+model: E:\models\qwen3-tts-17b
+backend: torch
+instruct: high-pitched young adult anime female voice, 18-22 years old character,
+  clear bright and confident, like a protagonist from shonen or seinen anime, mature
+  but youthful, NOT childish, NOT cute loli, strong feminine presence
+text: 'Ну привет, Кирюша. Я тут подумала: если ты опять забудешь поесть, я лично приду
+  и буду стоять над душой, пока всё не доешь. А теперь рассказывай, как прошёл день?'
+language: Russian
+seed_base: 1288540039
+random_seeds: true
+variants:
+- n: 1
+  file: preview_01_seed1288540039.wav
+  seed: 1288540039
+  audio_sec: 12.8
+  gen_sec: 41.37
+  rtf: 0.31
+- n: 2
+  file: preview_02_seed1288541039.wav
+  seed: 1288541039
+  audio_sec: 12.32
+  gen_sec: 21.93
+  rtf: 0.56
+- n: 3
+  file: preview_03_seed1288542039.wav
+  seed: 1288542039
+  audio_sec: 13.36
+  gen_sec: 21.33
+  rtf: 0.63
+- n: 4
+  file: preview_04_seed1288543039.wav
+  seed: 1288543039
+  audio_sec: 12.56
+  gen_sec: 11.62
+  rtf: 1.08
+- n: 5
+  file: preview_05_seed1288544039.wav
+  seed: 1288544039
+  audio_sec: 12.0
+  gen_sec: 26.21
+  rtf: 0.46
+- n: 6
+  file: preview_06_seed1288545039.wav
+  seed: 1288545039
+  audio_sec: 10.64
+  gen_sec: 27.71
+  rtf: 0.38
+- n: 7
+  file: preview_07_seed1288546039.wav
+  seed: 1288546039
+  audio_sec: 12.32
+  gen_sec: 29.95
+  rtf: 0.41
+- n: 8
+  file: preview_08_seed1288547039.wav
+  seed: 1288547039
+  audio_sec: 11.28
+  gen_sec: 12.48
+  rtf: 0.9
+- n: 9
+  file: preview_09_seed1288548039.wav
+  seed: 1288548039
+  audio_sec: 12.8
+  gen_sec: 16.81
+  rtf: 0.76
+- n: 10
+  file: preview_10_seed1288549039.wav
+  seed: 1288549039
+  audio_sec: 12.16
+  gen_sec: 12.16
+  rtf: 1.0
+- n: 11
+  file: preview_11_seed1288550039.wav
+  seed: 1288550039
+  audio_sec: 12.08
+  gen_sec: 10.56
+  rtf: 1.14
+- n: 12
+  file: preview_12_seed1288551039.wav
+  seed: 1288551039
+  audio_sec: 11.04
+  gen_sec: 10.52
+  rtf: 1.05

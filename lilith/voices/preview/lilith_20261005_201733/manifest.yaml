@@ -1,0 +1,84 @@
+persona: lilith
+created: '2026-10-05T20:17:43'
+model: E:\models\qwen3-tts-17b
+backend: torch
+instruct: anime girl voice, very high pitched, cute, sweet and breathy, young female,
+  Japanese anime dub style, emotional
+text: 'Ну привет, Кирюша. Я тут подумала: если ты опять забудешь поесть, я лично приду
+  и буду стоять над душой, пока всё не доешь. А теперь рассказывай, как прошёл день?'
+language: Russian
+seed_base: 1348808977
+random_seeds: true
+variants:
+- n: 1
+  file: preview_01_seed1348808977.wav
+  seed: 1348808977
+  audio_sec: 13.6
+  gen_sec: 8.55
+  rtf: 1.59
+- n: 2
+  file: preview_02_seed1348809977.wav
+  seed: 1348809977
+  audio_sec: 12.96
+  gen_sec: 7.85
+  rtf: 1.65
+- n: 3
+  file: preview_03_seed1348810977.wav
+  seed: 1348810977
+  audio_sec: 11.84
+  gen_sec: 7.33
+  rtf: 1.61
+- n: 4
+  file: preview_04_seed1348811977.wav
+  seed: 1348811977
+  audio_sec: 13.04
+  gen_sec: 6.19
+  rtf: 2.11
+- n: 5
+  file: preview_05_seed1348812977.wav
+  seed: 1348812977
+  audio_sec: 13.92
+  gen_sec: 6.62
+  rtf: 2.1
+- n: 6
+  file: preview_06_seed1348813977.wav
+  seed: 1348813977
+  audio_sec: 12.32
+  gen_sec: 5.97
+  rtf: 2.06
+- n: 7
+  file: preview_07_seed1348814977.wav
+  seed: 1348814977
+  audio_sec: 12.32
+  gen_sec: 10.7
+  rtf: 1.15
+- n: 8
+  file: preview_08_seed1348815977.wav
+  seed: 1348815977
+  audio_sec: 12.72
+  gen_sec: 6.93
+  rtf: 1.83
+- n: 9
+  file: preview_09_seed1348816977.wav
+  seed: 1348816977
+  audio_sec: 12.0
+  gen_sec: 7.04
+  rtf: 1.7
+- n: 10
+  file: preview_10_seed1348817977.wav
+  seed: 1348817977
+  audio_sec: 12.48
+  gen_sec: 8.01
+  rtf: 1.56
+- n: 11
+  file: preview_11_seed1348818977.wav
+  seed: 1348818977
+  audio_sec: 14.72
+  gen_sec: 18.66
+  rtf: 0.79
+- n: 12
+  file: preview_12_seed1348819977.wav
+  seed: 1348819977
+  audio_sec: 14.88
+  gen_sec: 17.34
+  rtf: 0.86

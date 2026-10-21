@@ -4,13 +4,13 @@
 # 0.7.0 (ADR-027): после усыновления души (scripts/voice_preview.py --adopt N)
 #     Курьер МЕНЯЕТ pack на lilith-soul (qwen3-клон из personas/lilith/voice/) —
 #     замена горячая, без перезапуска. До усыновления говорит silero-профиль.
-pack: lilith            # ключ из voice.profiles; после усыновления души → lilith-soul
+pack: lilith-soul            # ключ из voice.profiles; после усыновления души → lilith-soul
 speaker: ksenya
 sample_rate: 24000
 speed: 1.0
 pitch_shift: 0.0
 fallback_pack: soft     # если основной пак откажет
-reference_wav: null     # слот zero-shot-клона: после --adopt здесь
+reference_wav: personas/lilith/voice/reference.wav     # слот zero-shot-клона: после --adopt здесь
                         # personas/lilith/voice/reference.wav (душа, ADR-027 §4)
 
 # ADR-020.3 (приём из «Нейроны»): слот нонвербальных событий — смех, вздох,
