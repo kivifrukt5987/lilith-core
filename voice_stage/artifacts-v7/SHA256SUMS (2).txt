@@ -1,0 +1,2 @@
+fc0bcbd71dbc6a8d26eab5cbaecca4ca0d7569745091c6b5ecff3563f85a5b2d  0001-fix-0.7.1-21.10-Windows-offline-first-healthcheck-WS.patch
+b4749d74ef4df509bb29d122df3347d2f20dac2011056e48da7d41f3bd3d3be3  LILITH-CORE_stage4_v0.7.1.zip

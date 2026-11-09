@@ -297,7 +297,11 @@ class VoiceCore:
                 raise
             logger.error("TTS '{}' упал на реплике ({}), ADR-012 фолбэк на '{}'",
                          backend.name, exc, fallback.name)
-            return await fallback.synthesize(text, voice_profile)
+            try:
+                return await fallback.synthesize(text, voice_profile)
+            except Exception as fb_exc:  # noqa: BLE001
+                logger.error("TTS fallback '{}' failed too: {}", fallback.name, fb_exc)
+                raise exc from fb_exc
 
     async def stream(self, text: str, profile: str | None = None) -> AsyncIterator[bytes]:
         """Куски wav по мере готовности: плеер говорит, не дожидаясь конца.
