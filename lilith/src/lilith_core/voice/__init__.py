@@ -308,6 +308,13 @@ class VoiceCore:
 
         Фолбэк по ошибке (ADR-012) — только если не отдано ни одного куска:
         перезапускать реплику с середины значит заставить её говорить дважды.
+
+        Если упал и фолбэк (правка 16.11, ратифицировано Архитектором):
+        * фолбэк не отдал ни куска → наружу идёт **первичная** ошибка
+          (``raise exc from fb_exc``) — она объясняет, почему вообще включился фолбэк;
+        * фолбэк уже отдал куски и умер на середине → честная ошибка **его
+          собственная**: первичная к этому моменту устарела, реплика оборвана.
+        В обеих ветвях лог называет обе ошибки и оба движка.
         """
         voice_profile = self._profile(profile)
         backend = self.tts.pick_backend(voice_profile)
@@ -326,8 +333,27 @@ class VoiceCore:
                 raise
             logger.error("TTS '{}' упал до первого куска ({}), ADR-012 фолбэк на '{}'",
                          backend.name, exc, fallback.name)
-            async for chunk in fallback.stream(text, voice_profile):
-                yield chunk
+            fallback_yielded = False
+            try:
+                async for chunk in fallback.stream(text, voice_profile):
+                    fallback_yielded = True
+                    yield chunk
+            except asyncio.CancelledError:
+                raise
+            except Exception as fb_exc:  # noqa: BLE001
+                if fallback_yielded:
+                    logger.error(
+                        "TTS fallback '{}' упал на середине ({}); первичная ошибка '{}' ({}) — "
+                        "реплика оборвана, наружу идёт ошибка фолбэка",
+                        fallback.name, fb_exc, backend.name, exc,
+                    )
+                    raise
+                logger.error(
+                    "TTS fallback '{}' упал тоже ({}); первичная ошибка '{}' ({}) — "
+                    "наружу идёт первичная",
+                    fallback.name, fb_exc, backend.name, exc,
+                )
+                raise exc from fb_exc
 
     async def stream_mixed(
         self,

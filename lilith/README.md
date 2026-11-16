@@ -12,7 +12,7 @@ vLLM, Ollama, OpenRouter).
 | Версия | `0.7.1` (дефект-лист 21.10: offline-first загрузчик, edge-healthcheck, офлайн-рубильник тестов, WS-таймауты, стриппер канальных токенов — ADR-029; влит в `main`, тег `v0.7.1` на `5a94a29`). Предыдущая — `0.7.0-voice` (этап «Голос»: резидент Qwen3-TTS, «шкаф платьев», Voice Design, ADR-027/028; **голос жив с 08.10**, тег v0.7.0) |
 | Этап | 6 из 9 (`face-unity`) закрыт полностью; этап «Голос» (апгрейд слоя 4) собран; далее этап 7 «Руки» по команде |
 | Python | 3.11+ |
-| Тесты | **1175 passed, 2 skipped** (pytest), 0 warnings · с tree-sitter — 1177 |
+| Тесты | **1181 passed, 2 skipped** (pytest), 0 warnings · с tree-sitter — 1183 |
 | Unity | **6000.0.x LTS** (у Кирюши 6000.0.84f1) · Built-in RP · UniVRM 0.131.2 · VRM 1.0 |
 | Целевая машина | Windows 11, RTX 3060 12GB, i7-12700KF, 32GB RAM |
 
