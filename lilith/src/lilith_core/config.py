@@ -410,6 +410,10 @@ class VoiceSettings(_Section):
     packs_root: str = ""
     #: Препроцессинг текста (0.7.2-а, ADR-030): ударения + протяжки до TTS.
     preprocess: PreprocessSettings = Field(default_factory=PreprocessSettings)
+    #: Озвучивать только секцию речи (0.7.2-A, ADR-031): каркас ответа
+    #: ([СИСТЕМНОЕ УВЕДОМЛЕНИЕ], АНАЛИЗ, МЫСЛИ, [emotion:]) остаётся панели и лицу.
+    #: Консервативно: текст без признаков каркаса уходит в TTS как есть.
+    speech_extraction: bool = True
 
 
 class FaceSettings(_Section):

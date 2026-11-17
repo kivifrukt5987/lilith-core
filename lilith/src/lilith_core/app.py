@@ -48,6 +48,7 @@ from .face.endpoints import handle_group_ws, handle_legacy_unity_ws, handle_prod
 from .face import ws_frames as face_frames
 from .voice import PackError, VoiceCore, read_wav
 from .voice.pcm import PcmChunker, resample_pcm16
+from .voice.speech import extract_speech
 from pydantic import ValidationError
 from .config import Settings, config_source_info, get_settings, resolve_path
 from .echo import ReplyHandler, build_reply_handler
@@ -712,6 +713,10 @@ async def stream_voice_to_session(
     Этап 6: тот же поток **параллельно** уходит продюсеру лица (``/ws/face/producer``)
     в виде плоских кадров raw PCM 24 kHz по 2048 байт. Оба потребителя получают
     один ``utterance_id``, поэтому Unity может дропнуть реплику по кадру ``stop``.
+
+    0.7.2 (патч A): в горло уходит только секция речи — каркас ответа
+    (``[СИСТЕМНОЕ УВЕДОМЛЕНИЕ]``, ``АНАЛИЗ``, ``МЫСЛИ``, ``[emotion:]``) остаётся
+    панели и лицу. Пустая секция = молчим осознанно, с warning в логе.
     """
     import base64
 
@@ -720,6 +725,15 @@ async def stream_voice_to_session(
     producer: FaceProducerHub = app.state.face_producer
     persona_id = app.state.personas.active
     settings: Settings = app.state.settings
+    if settings.voice.speech_extraction:
+        speech = extract_speech(text)
+        if speech != text.strip():
+            logger.debug("Озвучка: из ответа вырезан каркас ({} → {} символов)",
+                         len(text), len(speech))
+        text = speech
+    if not text:
+        logger.warning("Озвучка: в ответе нет секции речи (только каркас) — молчу")
+        return
     utterance_id = f"u-{uuid.uuid4().hex[:8]}"
     chunker = PcmChunker(
         sample_rate=producer.sample_rate,

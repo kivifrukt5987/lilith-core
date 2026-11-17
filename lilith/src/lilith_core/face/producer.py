@@ -28,6 +28,7 @@ from loguru import logger
 
 from ..voice import VoiceCore, read_wav
 from ..voice.pcm import CHUNK_BYTES, DEFAULT_SAMPLE_RATE, PcmChunker, resample_pcm16
+from ..voice.speech import extract_speech
 from . import ws_frames as frames
 from .lora import PersonaLoraManager
 from .personas import Persona, PersonaRegistry
@@ -210,8 +211,22 @@ class FaceProducerHub:
         )
         viseme_seq = 0
         profile = voice_profile or self._voice_profile_for(persona)
+        text = utterance.text
+        if voice_core.settings.voice.speech_extraction:
+            speech = extract_speech(text)
+            if speech != text.strip():
+                logger.debug("Продюсер: из реплики {} вырезан каркас ({} → {} символов)",
+                             utterance.id, len(text), len(speech))
+            text = speech
         try:
-            async for chunk_wav in voice_core.stream(utterance.text, profile, persona=persona):
+            if not text:
+                logger.warning("Продюсер: в реплике {} нет секции речи (только каркас) — молчу",
+                               utterance.id)
+                await self.broadcast(
+                    frames.done_frame(utterance.id, reason="no_speech", persona=persona)
+                )
+                return
+            async for chunk_wav in voice_core.stream(text, profile, persona=persona):
                 if utterance.stopped:
                     return
                 pcm = self._to_pcm(chunk_wav)

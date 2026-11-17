@@ -153,6 +153,10 @@ voice:
     stress_mode: "acute"          # acute | caps | plus | off (Ж7-б выбирает маркер)
     drawl_enabled: true
     stress_dict: "config/stress_ru.yaml"   # личный: personas/<id>/voice/stress.yaml
+  # 0.7.2-A (ADR-031): в горло — только СЕКЦИЯ РЕЧИ. Каркас ответа
+  # ([СИСТЕМНОЕ УВЕДОМЛЕНИЕ], АНАЛИЗ, МЫСЛИ, [emotion:]) видят панель и лицо,
+  # но не слышит TTS. Текст без признаков каркаса озвучивается как есть.
+  speech_extraction: true
   profiles:
     lilith-soul:                   # ДУША Лилит (ADR-027): qwen3-клон из design-then-clone
       backend: "qwen3"
