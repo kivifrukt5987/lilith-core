@@ -352,6 +352,36 @@ class PreprocessSettings(_Section):
     stress_dict: str = "config/stress_ru.yaml"
 
 
+class RvcSettings(_Section):
+    """RVC-пост-фильтр тембра (0.7.2-б, ADR-032).
+
+    По умолчанию **выключен**: сначала NullRvc и гварды без модели, движок
+    подключается после пробы на F7 (`scripts/rvc_probe.py`). Конверсия идёт до
+    нарезки на чанки и подсчёта визем — иначе разъедется липсинк.
+    """
+
+    enabled: bool = False
+    #: null (заглушка) | rvc-python | aplio — движки подключаются после пробы F7.
+    backend: str = "null"
+    #: Папка с model.pth + added.index (добывает Курьер). В репозиторий не кладём.
+    model_dir: str = "models/rvc/esdeath"
+    index_rate: float = Field(default=0.66, ge=0.0, le=1.0)
+    f0_method: str = "rmvpe"
+    protect: float = Field(default=0.33, ge=0.0, le=1.0)
+    #: Контекст слева: модель «разгоняется» на предыдущем куске (400 мс — решение 17.11).
+    context_ms: int = Field(default=400, ge=0, le=2000)
+    #: Кроссфейд на стыке кусков: 50 мс — решение 17.11. Целиком — whole_utterance.
+    crossfade_ms: int = Field(default=50, ge=0, le=500)
+    #: true — конвертировать реплику целиком (лучше стык, хуже TTFA; сравнивать на Ж4-б).
+    whole_utterance: bool = False
+    device: str = "cuda"
+    fp16: bool = True
+    #: Грузить движок при старте; false — лениво по первому вызову.
+    autoload: bool = False
+    #: Защита от простыни: длинный кусок режется на части перед конверсией.
+    max_chunk_seconds: float = Field(default=30.0, gt=0)
+
+
 class VoiceSettings(_Section):
     """Слои «уши» (STT/VAD) и «горло» (TTS) — этап 4."""
 
@@ -414,6 +444,8 @@ class VoiceSettings(_Section):
     #: ([СИСТЕМНОЕ УВЕДОМЛЕНИЕ], АНАЛИЗ, МЫСЛИ, [emotion:]) остаётся панели и лицу.
     #: Консервативно: текст без признаков каркаса уходит в TTS как есть.
     speech_extraction: bool = True
+    #: RVC-пост-фильтр тембра (0.7.2-б, ADR-032): выключен до пробы движка на F7.
+    rvc: RvcSettings = Field(default_factory=RvcSettings)
 
 
 class FaceSettings(_Section):

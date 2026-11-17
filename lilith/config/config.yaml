@@ -159,6 +159,25 @@ voice:
   # ([СИСТЕМНОЕ УВЕДОМЛЕНИЕ], АНАЛИЗ, МЫСЛИ, [emotion:]) видят панель и лицо,
   # но не слышит TTS. Текст без признаков каркаса озвучивается как есть.
   speech_extraction: true
+  # RVC-ПОСТ-ФИЛЬТР ТЕМБРА (0.7.2-б, ADR-032) — до нарезки на чанки и визем.
+  # Выключен до пробы движка на F7 (scripts/rvc_probe.py): сначала NullRvc и
+  # гварды без модели, потом rvc-python/Aplio, потом Ж4-б и флаг.
+  # Веса: models/rvc/esdeath/{model.pth,added.index} (в git не кладём).
+  rvc:
+    enabled: false
+    backend: "null"               # null | rvc-python | aplio (после пробы)
+    model_dir: "models/rvc/esdeath"
+    index_rate: 0.66
+    f0_method: "rmvpe"
+    protect: 0.33
+    context_ms: 400               # контекст слева для модели (решение 17.11)
+    crossfade_ms: 50              # стык кусков (решение 17.11)
+    whole_utterance: false        # true — целиком (сравнивать на Ж4-б)
+    device: "cuda"
+    fp16: true
+    autoload: false
+    max_chunk_seconds: 30
+
   profiles:
     lilith-soul:                   # ДУША Лилит (ADR-027): qwen3-клон из design-then-clone
       backend: "qwen3"

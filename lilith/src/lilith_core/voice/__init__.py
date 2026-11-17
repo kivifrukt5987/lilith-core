@@ -34,6 +34,7 @@ from .pcm import (
     wav_to_pcm,
 )
 from .preprocess import TextPreprocessor
+from .rvc import RvcLayer
 from .stt import (
     EnergyVAD,
     FasterWhisperSTT,
@@ -188,6 +189,7 @@ class VoiceCore:
         )
         self.hotkey = MockPushToTalk(combo=settings.voice.push_to_talk_key)
         self.preprocess = TextPreprocessor(settings)
+        self.rvc = RvcLayer(settings)
         self._warmup_task: asyncio.Task | None = None
 
     def _prepare_text(self, text: str, persona: str | None = None) -> str:
@@ -302,7 +304,7 @@ class VoiceCore:
         voice_profile = self._profile(profile)
         backend = self.tts.pick_backend(voice_profile)
         try:
-            return await backend.synthesize(text, voice_profile)
+            audio = await backend.synthesize(text, voice_profile)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — ADR-012: упавший движок не роняет разговор
@@ -312,10 +314,11 @@ class VoiceCore:
             logger.error("TTS '{}' упал на реплике ({}), ADR-012 фолбэк на '{}'",
                          backend.name, exc, fallback.name)
             try:
-                return await fallback.synthesize(text, voice_profile)
+                audio = await fallback.synthesize(text, voice_profile)
             except Exception as fb_exc:  # noqa: BLE001
                 logger.error("TTS fallback '{}' failed too: {}", fallback.name, fb_exc)
                 raise exc from fb_exc
+        return await self.rvc.process_all(audio)
 
     async def stream(
         self, text: str, profile: str | None = None, *, persona: str | None = None
@@ -323,8 +326,28 @@ class VoiceCore:
         """Куски wav по мере готовности: плеер говорит, не дожидаясь конца.
 
         ``persona`` — чей личный словарь ударений применить (0.7.2-а); None — общий.
+        Поверх TTS — RVC-тембр (0.7.2-б): конверсия идёт ДО визем, иначе липсинк
+        разъезжается. Фильтр выключен (NullRvc) до пробы движка на F7.
+        """
+        text = self._prepare_text(text, persona)
+        rvc_stream = self.rvc.new_stream()
+        if rvc_stream is None:
+            async for chunk in self._stream_tts(text, profile):
+                yield chunk
+            return
+        try:
+            async for chunk in self._stream_tts(text, profile):
+                for converted in await rvc_stream.push(chunk):
+                    yield converted
+            for tail in await rvc_stream.flush():
+                yield tail
+        except asyncio.CancelledError:
+            raise
 
-        Фолбэк по ошибке (ADR-012) — только если не отдано ни одного куска:
+    async def _stream_tts(self, text: str, profile: str | None = None) -> AsyncIterator[bytes]:
+        """Сырые куски TTS с фолбэком (ADR-012). Без препроцессинга и RVC.
+
+        Фолбэк по ошибке — только если не отдано ни одного куска:
         перезапускать реплику с середины значит заставить её говорить дважды.
 
         Если упал и фолбэк (правка 16.11, ратифицировано Архитектором):
@@ -334,7 +357,6 @@ class VoiceCore:
           собственная**: первичная к этому моменту устарела, реплика оборвана.
         В обеих ветвях лог называет обе ошибки и оба движка.
         """
-        text = self._prepare_text(text, persona)
         voice_profile = self._profile(profile)
         backend = self.tts.pick_backend(voice_profile)
         yielded = False
@@ -415,4 +437,5 @@ class VoiceCore:
             "backends": self.stt.describe() + self.tts.describe(),
             "packs": self.packs.list(),
             "preprocess": self.preprocess.describe(),
+            "rvc": self.rvc.describe(),
         }
