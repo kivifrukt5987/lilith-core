@@ -4,7 +4,7 @@
 Всё живёт локально на машине Кирюши, мозг — любой OpenAI-совместимый endpoint (LM Studio, llama.cpp,
 vLLM, Ollama, OpenRouter).
 
-**Текущий статус: ЭТАП 6 — «Лицо = Unity-клиент»** (пивот: продюсер `/ws/face/producer`,
+Текущий статус: этап 6 закрыт; голос 0.7.2 (-а/-а2) жив; -б RVC в работе. Исторический пивот этапа 6:** (пивот: продюсер `/ws/face/producer`,
 реестр персон v2, LoRA-слот prompt-only, групповые сцены, `unity-client/`).
 
 | | |
@@ -12,13 +12,37 @@ vLLM, Ollama, OpenRouter).
 | Версия | `0.7.2` (0.7.2-а: препроцессинг текста до TTS — ударения acute U+0301 по словарю «слово → номер гласной» + схлопывание протяжек «ба-а-ам», ADR-030; патч A: speech-extraction — в горло только секция речи, ADR-031; 0.7.2-б RVC-тембр Эсдес — следующий патч). Предыдущая — `0.7.1` (дефект-лист 21.10: offline-first загрузчик, edge-healthcheck, офлайн-рубильник тестов, WS-таймауты, стриппер канальных токенов — ADR-029; тег `v0.7.1` на `5a94a29`). До неё — `0.7.0-voice` (этап «Голос»: резидент Qwen3-TTS, «шкаф платьев», Voice Design, ADR-027/028; **голос жив с 08.10**, тег v0.7.0) |
 | Этап | 6 из 9 (`face-unity`) закрыт полностью; этап «Голос» (апгрейд слоя 4) собран; далее этап 7 «Руки» по команде |
 | Python | 3.11+ |
-| Тесты | **1234 passed, 2 skipped** (pytest), 0 warnings · с tree-sitter — 1236 |
+| Тесты | F7 (Курьер): 1233 passed, 3 skipped (1236) · песочница Строительницы: 1234/2 (tree-sitter 1236) |
 | Unity | **6000.0.x LTS** (у Кирюши 6000.0.84f1) · Built-in RP · UniVRM 0.131.2 · VRM 1.0 |
 | Целевая машина | Windows 11, RTX 3060 12GB, i7-12700KF, 32GB RAM |
 
 ---
 
 ## 🗺️ Дорожная карта
+
+## 🧭 АКТУАЛЬНОЕ СОСТОЯНИЕ · карта v4 (17.11.2026, вечер) — ЯКОРЬ ПАМЯТИ
+> Этот блок — источник правды о текущем состоянии; исторические разделы ниже могут отставать.
+Версия 0.7.2: -а (препроцессинг) и -а2 (speech-extraction) ПРИНЯТЫ; -б (RVC-тембр Эсдес) в работе.
+main=0bf58b3; тег v0.7.1=5a94a29; тег v0.7.2 — после полной сборки.
+Тесты на машине Курьера (F7): 1233 passed, 3 skipped (1236 collection; +1 skip структуры одобрен).
+Голос ЖИВ (поле 17.11): резидент gemma-4-e2b-it-uncensored (LM Studio :1234) + корона qwen3-TTS
+локально E:/models/qwen3-tts-06b (offline=True), TTFA ~1056 мс. Bake-off 28.09 — исторический.
+Препроцессинг: ударения (config/stress_ru.yaml + личный stress.yaml, режим acute) + протяжки
+(одинаковые буквы) ДО токенизации. Speech-extraction: горло только речь, каркас панели/лицу;
+флаг voice.speech_extraction (true=только речь, false=фулл).
+Закон сессий: голос/личность = e2b (+3D); RP/работа = 9B/26b-moe/Goetia ТЕКСТОМ (голос off).
+Кузница: Строительница = DeepSeek-V4.1-Flash, мастерская D:\lilith-lair-dsh (копия репо),
+патчи в outbox (format-patch+SHA256), БЕЗ GitHub; приёмка = Курьер (certutil+am+форточка+ухо) → push.
+Полевые правки local.yaml: tts_resident_model_path=E:/models/qwen3-tts-06b; профили extra.model=local;
+strip_channel_tokens=false; chat max_tokens=300 (ВРЕМЕННЫЙ колпак до задачи C).
+Очередь: B reasoning_content · C WS keepalive/grace (+снять колпак) · D ключ-в-speak · E стриппер-Deckard ·
+F per-profile speech · G input-lock+cancel · H картотека LLM · I «Кузница» · J exe 0.8.0 ·
+K start.bat-local-default · L docs-refresh · «в» нонвербалика/эмодзи.
+Траблы 17.11: эхо-режим = LILITH_CONFIG пуст (тестовая форточка) → set local.yaml; thinking-only
+(Deckard) = content пуст → strip false / задача B; генерация >20 с = keepalive-обрыв → колпак 300 / C;
+TTS HF-id = стена → ключ+локальные профили; стикеры озвучиваются звуками = фича (маппинг в «в»).
+Доктрина: приёмка замером (0 failed + ухо), байт-в-байт хэши, герметичные тесты, контрольные выстрелы,
+источник правды = git + доки (этот анкор).
 
 | Этап | Слой | Что делаем | Статус |
 |------|------|-----------|--------|
@@ -34,6 +58,8 @@ vLLM, Ollama, OpenRouter).
 | 9 | Стрим и сервис | twitchio-триггеры, сцены OBS, docker-compose (searxng, redis), автозапуск `.bat`, бэкап репо | ⏳ |
 
 ---
+
+
 
 ## ⚡ Быстрый старт на Windows
 
@@ -512,7 +538,7 @@ python scripts\make_test_vrm.py --out personas\lilith\model.vrm --name Lilith
 * **Душа**: `python scripts/voice_preview.py --persona lilith --count 12 --random-seeds
   --instruct "описание"` → послушать → `--adopt N --verify-clone` → горячо переключить
   `default_voice: lilith-soul`. Подробности и маршрут Замера Ж — `RELEASE_0.7.0.md`.
-* **Bake-off короны (поправка ADR-027 от 28.09)**: Qwen3-TTS для RU забракован полем
+* [ИСТОРИЧЕСКОЕ 28.09; поле 17.11 воскресило qwen3 — голос жив, см. анкор v4] Bake-off короны (поправка ADR-027 от 28.09): Qwen3-TTS для RU забракован полем **Bake-off короны (поправка ADR-027 от 28.09)**: Qwen3-TTS для RU забракован полем
   (остался в шкафу как JP-генератор); нового резидента выбирает слепое прослушивание —
   `scripts/voice_bakeoff.py` (CosyVoice 3 / Fish S2 / XTTS v2 / qwen3-контроль),
   установка кандидатов и маршруты — `RELEASE_0.7.0.md` §8.
