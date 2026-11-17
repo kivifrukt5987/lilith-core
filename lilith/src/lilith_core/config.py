@@ -332,6 +332,26 @@ class MemorySettings(_Section):
     runtime_settings_path: str = "data/runtime_settings.json" 
 
 
+class PreprocessSettings(_Section):
+    """Препроцессинг текста перед горлом (0.7.2-а, ADR-030).
+
+    Ударения ставятся acute-маркером (U+0301) по словарю «слово → номер гласной»;
+    режим переключаем, потому что эксперимент Ж7-б ещё не закрыт. Протяжки
+    («ба-а-ам») схлопываются до TTS — иначе qwen3 читает их по буквам.
+    """
+
+    #: Включён по умолчанию: полевой дефект «КирюхА» живой (17.11), а преобразование
+    #: обратимо одним флагом. Пустой словарь = препроцессор ничего не меняет.
+    enabled: bool = True
+    #: acute (U+0301) | caps (зАглавная) | plus (з+а) | off.
+    #: Дефолт — acute до вердикта Ж7-б (решение Архитектора 17.11).
+    stress_mode: str = "acute"
+    #: Схлопывать протяжки «ба-а-ам» (дефис/многоточие между одинаковыми буквами).
+    drawl_enabled: bool = True
+    #: Общий словарь ударений; личный — ``personas/<id>/voice/stress.yaml`` (главнее).
+    stress_dict: str = "config/stress_ru.yaml"
+
+
 class VoiceSettings(_Section):
     """Слои «уши» (STT/VAD) и «горло» (TTS) — этап 4."""
 
@@ -387,7 +407,9 @@ class VoiceSettings(_Section):
     voices_dir: str = "voices"
     #: Манифест паков моделей и корень, куда их ставить.
     packs_manifest: str = "models/packs.yaml"
-    packs_root: str = "" 
+    packs_root: str = ""
+    #: Препроцессинг текста (0.7.2-а, ADR-030): ударения + протяжки до TTS.
+    preprocess: PreprocessSettings = Field(default_factory=PreprocessSettings)
 
 
 class FaceSettings(_Section):

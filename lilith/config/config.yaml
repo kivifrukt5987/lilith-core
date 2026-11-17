@@ -146,6 +146,15 @@ voice:
   tts_sample_rate: 48000
   default_voice: "lilith"        # после усыновления души (voice_preview.py --adopt)
                                  # Курьер горячо меняет на "lilith-soul" — без перезапуска
+  # ПРЕПРОЦЕССИНГ ТЕКСТА (0.7.2-а, ADR-030) — до токенизации TTS.
+  # Поле 17.11: qwen3 читала «КирюхА» и «ба-а-ам» по буквам. Ударения ставятся
+  # acute-маркером U+0301 (режим переключаем до вердикта Ж7-б); протяжки
+  # схлопываются только между ОДИНАКОВЫМИ буквами — «кто-то»/«ой-ой» целы.
+  preprocess:
+    enabled: true
+    stress_mode: "acute"          # acute | caps | plus | off (Ж7-б выбирает маркер)
+    drawl_enabled: true
+    stress_dict: "config/stress_ru.yaml"   # личный: personas/<id>/voice/stress.yaml
   profiles:
     lilith-soul:                   # ДУША Лилит (ADR-027): qwen3-клон из design-then-clone
       backend: "qwen3"

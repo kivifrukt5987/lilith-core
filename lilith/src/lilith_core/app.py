@@ -727,7 +727,7 @@ async def stream_voice_to_session(
         utterance_id=utterance_id,
     )
     seq = 0
-    async for chunk_wav in voice_core.stream(text, voice_profile):
+    async for chunk_wav in voice_core.stream(text, voice_profile, persona=persona_id):
         pcm, rate = read_wav(chunk_wav)
         for producer_chunk in chunker.push(resample_pcm16(pcm, rate, producer.sample_rate)):
             await producer.broadcast(

@@ -211,7 +211,7 @@ class FaceProducerHub:
         viseme_seq = 0
         profile = voice_profile or self._voice_profile_for(persona)
         try:
-            async for chunk_wav in voice_core.stream(utterance.text, profile):
+            async for chunk_wav in voice_core.stream(utterance.text, profile, persona=persona):
                 if utterance.stopped:
                     return
                 pcm = self._to_pcm(chunk_wav)

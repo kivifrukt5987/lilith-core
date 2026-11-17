@@ -33,6 +33,7 @@ from .pcm import (
     resample_pcm16,
     wav_to_pcm,
 )
+from .preprocess import TextPreprocessor
 from .stt import (
     EnergyVAD,
     FasterWhisperSTT,
@@ -186,7 +187,16 @@ class VoiceCore:
             root=resolve_path(settings.voice.packs_root or "."),
         )
         self.hotkey = MockPushToTalk(combo=settings.voice.push_to_talk_key)
+        self.preprocess = TextPreprocessor(settings)
         self._warmup_task: asyncio.Task | None = None
+
+    def _prepare_text(self, text: str, persona: str | None = None) -> str:
+        """Текст реплики → текст для TTS (0.7.2-а): ударения и протяжки.
+
+        Одна точка входа для всех путей (панель, ``/api/voice/say``, продюсер,
+        будущие мосты) — иначе какой-нибудь путь озвучит сырой текст.
+        """
+        return self.preprocess.apply(text, persona=persona)
 
     # -- жизненный цикл (ADR-027: резидент грузится при старте) ----------------- #
     async def start(self) -> None:
@@ -283,8 +293,12 @@ class VoiceCore:
         self.sync()
         return self.tts.profile(name)
 
-    async def speak(self, text: str, profile: str | None = None) -> bytes:
-        """Полный wav реплики выбранным голосом (фолбэк по доступности И по ошибке)."""
+    async def speak(self, text: str, profile: str | None = None, *, persona: str | None = None) -> bytes:
+        """Полный wav реплики выбранным голосом (фолбэк по доступности И по ошибке).
+
+        ``persona`` — чей личный словарь ударений применить (0.7.2-а); None — общий.
+        """
+        text = self._prepare_text(text, persona)
         voice_profile = self._profile(profile)
         backend = self.tts.pick_backend(voice_profile)
         try:
@@ -303,8 +317,12 @@ class VoiceCore:
                 logger.error("TTS fallback '{}' failed too: {}", fallback.name, fb_exc)
                 raise exc from fb_exc
 
-    async def stream(self, text: str, profile: str | None = None) -> AsyncIterator[bytes]:
+    async def stream(
+        self, text: str, profile: str | None = None, *, persona: str | None = None
+    ) -> AsyncIterator[bytes]:
         """Куски wav по мере готовности: плеер говорит, не дожидаясь конца.
+
+        ``persona`` — чей личный словарь ударений применить (0.7.2-а); None — общий.
 
         Фолбэк по ошибке (ADR-012) — только если не отдано ни одного куска:
         перезапускать реплику с середины значит заставить её говорить дважды.
@@ -316,6 +334,7 @@ class VoiceCore:
           собственная**: первичная к этому моменту устарела, реплика оборвана.
         В обеих ветвях лог называет обе ошибки и оба движка.
         """
+        text = self._prepare_text(text, persona)
         voice_profile = self._profile(profile)
         backend = self.tts.pick_backend(voice_profile)
         yielded = False
@@ -361,17 +380,21 @@ class VoiceCore:
         profile: str | None = None,
         nonverbal: dict[str, Any] | None = None,
         voice_dir: str | Path | None = None,
+        *,
+        persona: str | None = None,
     ) -> AsyncIterator[bytes]:
         """Реплика с нонвербаликой (ADR-027 Q7-б): текст → горло, теги → wav-пакеты.
 
         ``nonverbal`` — слот из voice.yaml персоны, ``voice_dir`` — её папка
         (personas/<id>/voice): ассеты в ``<voice_dir>/nonverbal/<ключ>.wav``.
         Нет ассета — тег вырезан, жёлтый лог, разговор продолжается.
+        ``persona`` — чей словарь ударений (0.7.2-а): препроцессинг делает
+        ``stream()`` для текстовых сегментов, чтобы не применять его дважды.
         """
         tags = nonverbal_tags(nonverbal)
         for kind, value in split_nonverbal(text, tags):
             if kind == "text":
-                async for chunk in self.stream(value, profile):
+                async for chunk in self.stream(value, profile, persona=persona):
                     yield chunk
             else:
                 pack = nonverbal_pack_path(voice_dir, value)
@@ -391,4 +414,5 @@ class VoiceCore:
             "hotkey": self.hotkey.combo,
             "backends": self.stt.describe() + self.tts.describe(),
             "packs": self.packs.list(),
+            "preprocess": self.preprocess.describe(),
         }
