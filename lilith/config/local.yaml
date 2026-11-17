@@ -51,6 +51,7 @@ logging:
 #   Ollama               - много моделей на одном порту, различаются именем
 #   облако (OpenRouter)  - свой base_url + ключ из .env
 brain:
+  strip_channel_tokens: false
   default_profile: chat
   api_key_env: "LILITH_BRAIN_API_KEY"
   system_prompt_extra: "Формат реплик: пиши по-русски красиво - СИСТЕМНОЕ УВЕДОМЛЕНИЕ, АНАЛИЗ, МЫСЛИ в кавычках отдельными блоками, речь с эмодзи и стикерами; теги [emotion: X] пиши ТОЛЬКО одной строкой в самом конце реплики (их читает лицо, в чате они скроются); не вставляй emotion-теги внутрь текста."
@@ -68,7 +69,8 @@ brain:
     history_max_messages: 40                 # сколько последних реплик шлём в контекст
 
   profiles:
-    chat:                         # основная компаньонка: резидент голосовой сессии
+    chat:    
+      max_tokens: 300                     # основная компаньонка: резидент голосовой сессии
       note: "ADR-028: Qwen3.6-4B Q4_K_M uncensored (LM Studio :1234) — ~4.5 ГБ с контекстом; 9B с TTS-резидентом в 12 ГБ НЕ соживётся"
       temperature: 0.9
     coder:                        # код и тяжёлые задачи: большая модель или облако
@@ -147,7 +149,7 @@ voice:
       backend: "qwen3"
       reference: "personas/lilith/voice/reference.wav"   # появится после --adopt
       extra:
-        model: "Qwen/Qwen3-TTS-12Hz-0.6B-Base"           # HF-кэш; локально — models/qwen3-tts/...
+        model: "E:/models/qwen3-tts-06b"           # HF-кэш; локально — models/qwen3-tts/...
         mode: "clone"
         ref_text: "personas/lilith/voice/reference.txt"  # точная транскрипция (пишет voice_preview)
         language: "Russian"
@@ -157,7 +159,7 @@ voice:
       backend: "qwen3"
       reference: "personas/olya/voice/reference.wav"
       extra:
-        model: "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+        model: "E:/models/qwen3-tts-06b"
         mode: "clone"
         ref_text: "personas/olya/voice/reference.txt"
         language: "Russian"
